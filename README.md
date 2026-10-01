@@ -12,10 +12,7 @@ Statements of Work. Consolidates the airodump-ng → cap2hccapx → hashcat pipe
 EAP work, and site survey into one Go daemon with thin clients.
 
 No Python, no aircrack-ng, no hcxtools, no eaphammer at runtime. WARP does not crack - it
-writes hash files for a separate rig.
-
-See `CHANGELOG.md` for what changed, and the `wiki/` folder for the quickstart and the terminal
-and browser guides.
+writes hash files for cracking on a separate rig.
 
 ---
 
@@ -30,8 +27,7 @@ the evil twin, and the log, with per-row attack keys.
 
 ### Browser interface (Web)
 
-The same RPC surface in a hand-written, dependency-free page served on loopback - drive an engagement
-from a laptop beside the rack.
+The same RPC surface in a hand-written, dependency-free page served on loopback by default.
 
 ![WARP browser interface](docs/img/web.png)
 
@@ -60,44 +56,6 @@ produced it.
 
 Root is needed only to reconfigure adapters - `warp radios probe` and every read-only
 subcommand run unprivileged.
-
----
-
-## Status
-
-Phases 1-3 are code complete, Phase 4 partially. PEAPv0 enterprise capture, WPS Pixie Dust with
-passphrase retrieval, and PMKID solicitation all work over the air against real hardware. The RADIUS
-server also speaks EAP-TTLS with PAP (cleartext credentials) and MSCHAPv2 (hashcat -m 5500) inner
-methods.
-
-| Package | What it does |
-|---|---|
-| `internal/scope` | ESSID scope model and the authorization gate |
-| `internal/audit` | Append-only `events.jsonl`, fsync per record |
-| `internal/radio/nl80211` | nl80211 client: wiphy dump, bands, iftypes, interface combinations (exact max-flow feasibility), channel mapping |
-| `internal/radio` | Device model, role scheduler with survey pinning, weighted-dwell channel plan, acquisition/teardown |
-| `internal/capture` | AF_PACKET source, radiotap parser, pcapng archive writer |
-| `internal/recon` | 802.11 frame + IE parsing, RSN/WPA classification, radio fingerprinting, BSSID/station tracking |
-| `internal/handshake` | EAPOL state machine, PMKID extraction, native 22000 emission, deduplicating writer |
-| `internal/inject` | Frame construction, gated injection, PMKID solicitation, MFP-aware deauth, karma probes |
-| `internal/store` | sqlite schema (observations and conclusions in separate tables), walkthroughs, CSV projections |
-| `internal/rogue` | Population clustering, tiered classification |
-| `internal/hunt` | Direction finding with peak-hold and an audible cue |
-| `internal/eap/*` | RADIUS server, EAP/PEAP state machine, TLS-over-EAP transport, over-the-air certificate harvesting, mimic generation, hostapd controller |
-| `internal/wps` | WPS registration protocol to M3, and offline Pixie Dust PIN recovery |
-| `internal/report` | Engagement report with an explicit limitations section |
-| `internal/rpc`, `internal/daemon`, `internal/cli`, `internal/repl` | JSON-RPC surface, daemon wiring, subcommands, terminal dashboard |
-| `internal/web` | Browser interface - token auth, TLS, SSE, embedded assets; a client of the same RPC surface |
-
-**Outstanding:** TTLS inner methods, hostile portal, native nl80211 AP (Phase 4 by design),
-6 GHz / WPA3-Enterprise specifics.
-
-On mt76 adapters, reset the cards between heavy runs (`warp radios reset <radio>`, the **Reset**
-button on the Radios tab, or unplug/replug) - they wedge on repeated mode-cycling. The live reset
-needs capture stopped; it power-cycles the one adapter and rebinds it without restarting warpd. WARP
-also self-heals from a transient USB drop: when an adapter re-enumerates (a new interface index and
-phy under the same name), WARP re-resolves it by name and rebinds instead of stranding the radio on a
-dead index, so a card that flaps on a hub or USB passthrough recovers on its own.
 
 ---
 
@@ -137,30 +95,7 @@ Neither holds engagement state. Close either one, lose the SSH session, kill the
 
 ## The terminal dashboard
 
-`warp` with no arguments opens it. Seven tabs, live, no commands to memorise:
-
-```
-╭────────────────────────────────────────────────────────────────────────────────────╮
-│  WARP ./engagement · 14m22s                                      v0.7.0 @waffl3ss  │
-│ ● CAPTURING   phy0/wlan0 recon ch6 ▁▃▅▇  │  phy1/wlan1 survey ch11 ▂▄▃▅            │
-│ 24 APs  61 clients  2 findings  4 pmkid  2 handshakes  1 jobs  40% disk  ▸ Floor_1 │
-│ ▲ rogue AP / enterprise credential capture: no adapter supports AP mode            │
-╰────────────────────────────────────────────────────────────────────────────────────╯
- ① OVERVIEW ② ACCESS POINTS 24 ③ CLIENTS 61 ④ CREDENTIALS 6 ⑤ FINDINGS 2 ⑥ JOBS 1 ⑦ RADIOS ⑧ EVIL TWIN ⑨ LOG
-╭─────────────────────────────────────────────────────────╮╭───────────────────────╮
-│ Access points                                           ││ Detail                │
-│  BSSID              NETWORK      BAND CH  SIGNAL     PMF││                       │
-│ ────────────────────────────────────────────────────────││ a4:2b:8c:11:22:01     │
-│  a4:2b:8c:11:22:01  CORP-WIFI    2.4  6   █████░ -42 off││ CORP-WIFI             │
-│  a4:2b:8c:11:22:02  CORP-WIFI    5    44  ███░░░ -58 req││ channel    6          │
-│  b0:b1:b2:c3:c4:c5  BACKOFFICE◉  2.4  3   ████░░ -59 off││ pmf  off (deauth works)│
-│  de:ad:be:ef:00:01  <hidden>     2.4  6   █░░░░░ -77 ?  ││ scope      in scope   │
-╰─────────────────────────────────────────────────────────╯╰───────────────────────╯
- ↑↓ move · ⏎ detail · s solicit · d deauth · h hunt · o sort · p pause · y copy · q quit
-```
-
-The build and handle sit at the right of the title line, faint - findable if you look for
-them, out of the way while you are working.
+`warp` with no arguments opens it. Seven tabs, live, no commands to memorise. The build and handle sit at the right of the title line, faint - findable if you look for them, out of the way while you are working.
 
 `PMF` is Protected Management Frames (802.11w) - `off` means any associated client can be
 deauthenticated, `req` means none can. `◉` marks a hidden network whose name WARP recovered
@@ -228,7 +163,7 @@ The link logs you in. Because the interface can transmit:
 
 - It **binds loopback only** by default (`127.0.0.1:8443`), so `--web` on its own is reachable
   only from the box itself. Reach it over an SSH port-forward (`ssh -L 8443:127.0.0.1:8443
-  eng-box`) or the engagement's WireGuard tunnel - that is the recommended path. To bind a
+  eng-box`) - that is the recommended path. To bind a
   network-reachable address instead you must pass **both** the address and the opt-in:
   `--web-listen 0.0.0.0:8443 --web-allow-remote` (`--listen` / `--allow-remote` on `warp web`).
   Binding a non-loopback address without `--web-allow-remote` is refused, because this interface
@@ -310,13 +245,13 @@ you can do, before you are on site:
 ## Scope model in one paragraph
 
 The client provides `scope.txt`, a newline-delimited list of ESSIDs. That list **is** the
-authorization, because it is exactly what the SoW grants. Any BSSID broadcasting a scoped
-ESSID is authorized for active work; anything else is passive observation only, permanently.
+authorization, because it is exactly what a Statement of Work grants. Any BSSID broadcasting a scoped
+ESSID is authorized for active work; anything else is passive observation only.
 BSSIDs are always discovered off the air and never configured - there is no input file, flag
 or struct field anywhere that accepts one as scope.
 
 `scope confirm <bssid>` records an operator sanity check. It is advisory and never a
-precondition: a NUC in a wiring closet has nobody to confirm anything and does identical work.
+precondition: a testing device in a wiring closet has nobody to confirm anything and does identical work.
 
 Generic scoped names (`Guest`, `linksys`, `attwifi`, …) are flagged at `init`, because a
 neighbour can legitimately broadcast the same name. Each requires an explicit acknowledgment
@@ -376,7 +311,7 @@ actually observed can be added - scope names things off the air, it never invent
 
 ```sh
 ./bin/warp init ./engagement --all-networks \
-  --justification "SoW 2026-114 §3, all wireless at the Reno DC"
+  --justification "SoW 123456789, all wireless at client location"
 ```
 
 Every *named* network becomes authorized for active work. It exists for an SoW written that

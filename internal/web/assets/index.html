@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>WARP</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>📡</text></svg>">
+</head>
+<body>
+
+<noscript>
+  <div class="noscript">
+    <b>This interface needs JavaScript.</b>
+    Nothing here is unique to the browser - run <code>warp</code> on the engagement box for
+    the same dashboard in the terminal, or drive the same API with <code>curl</code>.
+  </div>
+</noscript>
+
+<section id="login">
+  <form id="loginForm" autocomplete="off">
+    <h1>WARP</h1>
+    <p>
+      This interface can start captures and transmit. The access token is printed by
+      <code>warpd</code> when it starts.
+    </p>
+    <input id="token" type="password" placeholder="access token" autocomplete="off" spellcheck="false">
+    <button type="submit">Unlock</button>
+    <div class="err" id="loginErr"></div>
+    <div class="credit">Wireless Assessment &amp; Rogue Platform · <b>@waffl3ss</b></div>
+  </form>
+</section>
+
+<div id="app">
+  <header>
+    <span class="brand">WARP</span>
+    <span class="pill idle" id="reconPill">IDLE</span>
+    <button class="act tiny" id="captureBtn" title="Start or stop recon capture - reachable from any tab"></button>
+    <div class="radios" id="radios"></div>
+    <button class="act tiny" id="logout" title="End this browser session. Running jobs are unaffected - the daemon owns them.">lock</button>
+  </header>
+
+  <div class="diskfull" id="disk"></div>
+  <div class="sitewide" id="sitewide"></div>
+  <div class="hunts" id="hunts"></div>
+  <div class="walk" id="walkbanner"></div>
+  <div class="eap" id="eap"></div>
+  <div class="banner" id="banner"></div>
+
+  <nav id="tabs"></nav>
+
+  <main id="main">
+    <div class="pane" id="pane"></div>
+    <aside class="side" id="side"></aside>
+  </main>
+
+  <footer id="statusbar">
+    <div class="stats" id="stats"></div>
+    <span class="credit" id="credit" title="Wireless Assessment &amp; Rogue Platform">@waffl3ss</span>
+  </footer>
+</div>
+
+<div id="toasts"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

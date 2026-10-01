@@ -1,0 +1,664 @@
+/* WARP web interface.
+ *
+ * Everything is embedded in the binary: no CDN, no webfonts, no build step. An engagement
+ * box in a wiring closet frequently has no route to the internet, and a dashboard that goes
+ * blank without one is useless exactly when it is needed.
+ */
+
+:root {
+  --bg:        #0d1117;
+  --bg-raised: #161b22;
+  --bg-inset:  #10151c;
+  --line:      #262c36;
+  --line-soft: #1c222b;
+
+  --text:      #e6edf3;
+  --text-dim:  #9198a1;
+  --text-faint:#6b7280;
+
+  --accent:    #3fb950;  /* in scope, good, live */
+  --cyan:      #2dd4bf;  /* selection, headings */
+  --amber:     #d29922;  /* degraded, warning */
+  --red:       #f85149;  /* failure, open network */
+  --violet:    #bc8cff;  /* evidence tier */
+  --blue:      #58a6ff;  /* informational */
+
+  --radius: 8px;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: var(--sans); font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- login ---------- */
+
+/* Hidden until the script decides which of the two to show. An existing session should not
+   flash the login form on every reload. */
+#login {
+  display: none; place-items: center; height: 100vh;
+}
+#login form {
+  background: var(--bg-raised); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 32px; width: min(420px, 90vw);
+}
+#login h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .08em; }
+#login p  { margin: 0 0 20px; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+#login input {
+  width: 100%; padding: 10px 12px; font-family: var(--mono); font-size: 13px;
+  background: var(--bg-inset); border: 1px solid var(--line);
+  border-radius: 6px; color: var(--text);
+}
+#login input:focus { outline: none; border-color: var(--cyan); }
+#login button {
+  margin-top: 12px; width: 100%; padding: 10px;
+  background: var(--accent); color: #08130c; border: 0; border-radius: 6px;
+  font-weight: 600; cursor: pointer; font-size: 14px;
+}
+#login .err { color: var(--red); margin-top: 12px; font-size: 13px; min-height: 18px; }
+
+/* ---------- shell ---------- */
+
+#app { display: none; flex-direction: column; height: 100vh; }
+#app.on { display: flex; }
+#main { flex: 1; min-height: 0; }
+
+/* Permanent status bar pinned to the bottom on every page: the running counters on the left with
+   dividers between them, the build/attribution on the right. */
+#statusbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 6px 16px; background: var(--bg-raised); border-top: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+#statusbar .stats { margin: 0; gap: 0; }
+#statusbar .stat {
+  padding: 0 14px; border-left: 1px solid var(--line); line-height: 1.2;
+}
+#statusbar .stat:first-child { border-left: 0; padding-left: 0; }
+#statusbar .stat b { font-size: 13px; }
+#statusbar .credit { margin: 0; }
+
+header {
+  background: var(--bg-raised); border-bottom: 1px solid var(--line);
+  padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 20px; align-items: center;
+}
+/* Wordmark: a tight cyan→green gradient, a touch heavier and wider than plain text. Falls back to
+   solid cyan where background-clip:text is unsupported. */
+.brand {
+  font-weight: 800; letter-spacing: .18em; font-size: 26px; line-height: 1; color: var(--cyan);
+  background: linear-gradient(95deg, var(--cyan), var(--accent) 85%);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+/* Keep the taller wordmark from stretching the top bar: align the row and cap its growth. */
+header { align-items: center; }
+.pill {
+  font-family: var(--mono); font-size: 12px; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.pill.live { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.pill.idle { color: var(--text-faint); }
+
+.stats { display: flex; gap: 18px; flex-wrap: wrap; margin-left: auto; }
+.stat  { display: flex; gap: 6px; align-items: baseline; }
+.stat b { font-family: var(--mono); font-size: 15px; }
+.stat span { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+
+/* One row per adapter: role, channel, lock state and bands do not fit on a shared line. */
+.radios { display: grid; gap: 2px; font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+/* Fixed columns so a one- vs three-digit channel does not shift everything after it. */
+/* The last three columns (sparkline, frame count, optional "dropped") size to their content so the
+   variable-width sparkline can never overrun the frame count beside it - the fixed 44px track it
+   used to sit in was narrower than the glyphs and the two overlapped. */
+.radio { display: grid; grid-template-columns: 56px 62px 96px 64px auto auto auto; gap: 10px; align-items: center; white-space: nowrap; }
+.radio .rid { color: var(--text); font-weight: 600; }
+.radio .ifn { color: var(--text); font-weight: 600; }
+.radio .role { color: var(--text-dim); }
+.radio .ch { color: var(--text-dim); }
+/* Locked/parked channel: amber, matching the TUI's orange CH LOCK. The .radio .ch rule above is
+   more specific than a bare .warn, so the locked state needs its own explicit colour here. */
+.radio .ch.warn { color: var(--amber); }
+.radio .bands { font-size: 11px; }
+.radio .fspark { font-family: var(--mono); letter-spacing: -1px; font-size: 13px; color: var(--accent); }
+.radio .frames { font-family: var(--mono); font-size: 11px; }
+
+.noscript {
+  margin: 40px auto; max-width: 640px; padding: 20px 24px; line-height: 1.6;
+  background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.noscript b { display: block; margin-bottom: 6px; }
+.noscript code { font-family: var(--mono); color: var(--cyan); }
+
+#logout { margin-left: auto; }
+
+/* Attribution. Present, not loud - it sits beside live engagement data. */
+.credit {
+  font-family: var(--mono); font-size: 11px; color: var(--text-faint);
+  letter-spacing: .04em; white-space: nowrap;
+}
+#login .credit {
+  margin-top: 18px; text-align: center; font-size: 11.5px;
+  font-family: var(--sans); letter-spacing: 0;
+}
+#login .credit b { color: var(--text-dim); font-weight: 600; }
+
+.sitewide {
+  padding: 8px 16px; font-size: 13px; line-height: 1.5;
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+.sitewide:empty { display: none; }
+.sitewide b { letter-spacing: .06em; }
+.sitewide .why { color: var(--text-dim); }
+
+/* The disk banner. Same weight as the site-wide scope banner deliberately: both are things
+   that must be impossible to be looking at this screen and not know about. */
+.diskfull {
+  padding: 8px 16px; font-size: 13px; line-height: 1.5;
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+.diskfull:empty { display: none; }
+.diskfull b { letter-spacing: .06em; }
+
+.hunts:empty { display: none; }
+.hunt {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 8px 16px; font-size: 13px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--accent);
+}
+.hunt.quiet, .hunt.stale {
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--amber) 30%, transparent);
+  color: var(--amber);
+}
+.hunt .peak, .hunt .rate { color: var(--text-dim); font-family: var(--mono); font-size: 12px; }
+.hunt button { margin-left: auto; }
+/* The audible-cue speaker toggle: an icon button that inherits the bar colour when on (green, or
+   amber on a quiet bar) and dims when muted. Sits to the right of the stop button. */
+.hunt-mute {
+  margin-left: 0; background: none; border: 0; padding: 2px; cursor: pointer; color: inherit;
+  display: inline-flex; align-items: center; line-height: 0; opacity: .85;
+}
+.hunt-mute:hover { opacity: 1; }
+.hunt-mute.muted { color: var(--text-faint); }
+/* Walkthrough banner - same shape as the hunt banner, cyan to distinguish it. */
+.walk-live {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 8px 16px; font-size: 13px;
+  background: color-mix(in srgb, var(--cyan) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--cyan) 30%, transparent);
+  color: var(--cyan);
+}
+.walk-live .meta { color: var(--text-dim); font-family: var(--mono); font-size: 12px; }
+.walk-live button { margin-left: auto; }
+/* The live reading is the thing the operator watches while walking, so it is oversized. */
+.hunt .big-rssi { font-family: var(--mono); font-size: 22px; font-weight: 700; line-height: 1; }
+.hunt .big-rssi i { font-size: 12px; font-weight: 400; font-style: normal; opacity: .7; }
+.hunt .lock { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.hunt .trend { font-weight: 600; font-size: 13px; }
+.hunt .spark { font-family: var(--mono); letter-spacing: -1px; font-size: 15px; opacity: .85; }
+
+/* Impersonating a network is transmitting under someone else's name. It stays on screen for
+   as long as it is happening. */
+.eap:empty { display: none; }
+.eap {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 8px 16px; font-size: 13px;
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+.eap .why { color: var(--text-dim); font-size: 12px; }
+.eap button { margin-left: auto; }
+
+.banner {
+  grid-column: 1 / -1; width: 100%; padding: 8px 16px; font-size: 13px;
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--amber) 30%, transparent);
+  color: var(--amber);
+}
+.banner:empty { display: none; }
+
+/* ---------- tabs ---------- */
+
+nav { display: flex; gap: 2px; padding: 0 12px; background: var(--bg-raised); border-bottom: 1px solid var(--line); }
+nav button {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--text-dim); padding: 10px 14px; cursor: pointer; font-size: 13px;
+  font-family: inherit;
+}
+nav button:hover { color: var(--text); }
+nav button.on { color: var(--cyan); border-bottom-color: var(--cyan); }
+nav button .n { font-family: var(--mono); color: var(--text-faint); margin-left: 6px; font-size: 12px; }
+
+/* ---------- main ---------- */
+
+main { overflow: hidden; display: grid; grid-template-columns: 1fr; }
+main.split { grid-template-columns: 1fr 380px; }
+
+.pane { overflow: auto; padding: 12px 16px 40px; }
+.side {
+  overflow: auto; padding: 16px; border-left: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+/* A tab with no detail pane leaves #side empty; without this it renders as a grey block below the
+   content (the grid places it in a second row), so the page background is not consistently dark
+   from header to footer. Hidden when empty keeps the ground uniform. */
+.side:empty { display: none; }
+/* General note text (not in a side pane) sits under a table or section; give it a clear top gap so
+   it does not butt against the element above it. */
+.note { margin-top: 12px; color: var(--text-dim); font-size: 13px; line-height: 1.6; }
+
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.toolbar input[type=search] {
+  flex: 1 1 220px; min-width: 160px; padding: 7px 10px;
+  background: var(--bg-inset); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); font-family: var(--mono); font-size: 13px;
+}
+.toolbar input[type=search]:focus { outline: none; border-color: var(--cyan); }
+.toolbar label { display: flex; gap: 6px; align-items: center; color: var(--text-dim); font-size: 13px; cursor: pointer; }
+
+button.act {
+  background: var(--bg-inset); border: 1px solid var(--line); color: var(--text);
+  padding: 7px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-family: inherit;
+}
+button.act:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); }
+button.act:disabled { opacity: .4; cursor: not-allowed; }
+button.act.primary { background: var(--accent); color: #08130c; border-color: transparent; font-weight: 600; }
+button.act.danger  { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
+
+/* ---------- tables ---------- */
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead th {
+  /* Plain solid header by default. Bright bold text with a coloured divider so it reads as a
+     header, but NOT pinned - a pinned header on a tab that stacks several tables and prose (the
+     credentials tab) floats over the text above the next table. */
+  background: var(--bg-raised); text-align: left; padding: 9px 10px;
+  color: var(--text); font-weight: 600; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .06em;
+  box-shadow: inset 0 -2px 0 var(--cyan);
+  cursor: pointer; white-space: nowrap;
+}
+/* The big single-table data views (access points, clients) opt in to a pinned header so the
+   column labels stay visible while scrolling a long list. The extra top shadow paints over the
+   pane's top padding so no row shows in the gap above it. */
+.sticky thead th {
+  position: sticky; top: 0; z-index: 3;
+  box-shadow: 0 -14px 0 var(--bg-raised), inset 0 -2px 0 var(--cyan);
+}
+thead th:hover { color: var(--text); }
+thead th .dir { color: var(--cyan); }
+/* Banded rows. Sixty access points on one screen is normal, and the eye loses its place
+   tracking a BSSID across to the signal column without them. */
+tbody tr { border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+tbody tr:nth-child(even) { background: color-mix(in srgb, var(--bg-raised) 55%, transparent); }
+tbody tr:hover, tbody tr:nth-child(even):hover { background: var(--bg-raised); }
+tbody tr.sel,
+tbody tr.sel:nth-child(even) { background: color-mix(in srgb, var(--cyan) 16%, transparent); }
+tbody tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--cyan); }
+
+/* A hidden network whose name was recovered anyway. */
+/* The hash line. Selectable and wrappable: it exists to be copied onto the cracking rig. */
+.hashline {
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-dim);
+  word-break: break-all; user-select: all; cursor: text;
+}
+
+.hidden-tag { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); margin-left: 6px; cursor: help; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.rogue-tag { color: var(--red); border-color: color-mix(in srgb, var(--red) 50%, transparent); margin-left: 6px; cursor: help; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+tbody td { padding: 7px 10px; font-family: var(--mono); white-space: nowrap; }
+tbody td.wrap { white-space: normal; font-family: var(--sans); }
+
+.muted { color: var(--text-faint); }
+.dim   { color: var(--text-dim); }
+.good  { color: var(--accent); }
+.warn  { color: var(--amber); }
+.bad   { color: var(--red); }
+.info  { color: var(--blue); }
+.evid  { color: var(--violet); }
+
+/* Signal strength: a bar reads faster than a number in a column of numbers. */
+.sig { display: inline-flex; align-items: center; gap: 7px; }
+.sig .bar { width: 62px; height: 6px; background: var(--bg-inset); border-radius: 3px; overflow: hidden; }
+.sig .bar i { display: block; height: 100%; border-radius: 3px; }
+.sig .n { width: 32px; text-align: right; color: var(--text-dim); }
+/* A stale reading (device not heard recently) is dimmed: the last measurement is kept, but it is
+   not presented as a live signal. */
+.sig.stale { opacity: .5; }
+
+.tag {
+  display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px;
+  border: 1px solid currentColor; opacity: .95;
+}
+
+/* Modal dialogs - replace the browser's prompt/confirm/alert, which cannot be styled. */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, #000 55%, transparent); padding: 16px;
+}
+.modal-box {
+  background: var(--bg-raised); border: 1px solid var(--line); border-radius: 10px;
+  padding: 20px; max-width: 460px; width: 100%; box-shadow: 0 12px 40px rgba(0,0,0,.4);
+}
+.modal-title { margin: 0 0 10px; font-size: 15px; color: var(--text); }
+.modal-msg { color: var(--text-dim); font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+/* A wider modal for reading a block of output (encryption detail), with its monospaced body. */
+.modal-box.modal-wide { max-width: 720px; }
+.modal-pre {
+  font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+  word-break: break-word; margin: 0; padding: 10px 12px; max-height: 60vh; overflow: auto;
+  background: var(--bg-inset); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); user-select: all;
+}
+/* The "get it yourself" command, sitting below a copy area and above the buttons - deliberately not
+   part of the copied block. */
+.modal-cmd { margin-top: 10px; font-size: 12px; }
+.modal-cmd .muted { margin-bottom: 3px; }
+.modal-cmd code {
+  display: block; font-family: var(--mono); font-size: 12px; white-space: pre-wrap;
+  word-break: break-all; background: var(--bg-inset); border: 1px solid var(--line);
+  border-radius: 5px; padding: 6px 8px; user-select: all;
+}
+.modal-input {
+  width: 100%; margin-top: 14px; padding: 8px 10px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg-inset); color: var(--text);
+  font-family: inherit; font-size: 14px; box-sizing: border-box;
+}
+.modal-input:focus { outline: none; border-color: var(--cyan); }
+/* Deauth options: two short numeric fields side by side, each with a label above and a default hint. */
+.modal-fields { display: flex; gap: 12px; margin-top: 14px; }
+.modal-field { display: flex; flex-direction: column; gap: 4px; flex: 1; font-size: 12px; color: var(--text-dim); }
+.modal-field .modal-input { margin-top: 0; }
+.modal-hint { color: var(--text-faint); font-size: 11px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+.empty { padding: 48px 16px; text-align: center; color: var(--text-dim); }
+.empty b { display: block; color: var(--text); font-size: 15px; margin-bottom: 6px; }
+
+/* ---------- detail sidebar ---------- */
+
+.side h2 { margin: 0 0 2px; font-size: 15px; font-family: var(--mono); }
+.side .sub { color: var(--text-dim); margin-bottom: 16px; font-size: 13px; }
+.side dl { display: grid; grid-template-columns: 96px 1fr; gap: 6px 10px; margin: 0 0 16px; font-size: 13px; }
+.side dt { color: var(--text-faint); }
+.side dd { margin: 0; font-family: var(--mono); word-break: break-word; }
+.side h3 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-faint); margin: 18px 0 8px; font-weight: 500;
+}
+/* Detail-panel actions (Solicit, Deauth, Hunt, Exclude, …) stack one per row, full width, so they
+   are a clean column of same-size buttons rather than an uneven wrapped row. Applies to every
+   detail panel - Access points, Clients, and the rest. */
+.side .actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-top: 16px; }
+.side .actions button.act { width: 100%; }
+/* An inline form inside the actions column (the pin-to-channel box + button) still lays out as a
+   row within its own full-width slot. */
+.side .actions form { display: flex; gap: 6px; }
+.side .actions form button.act { width: auto; }
+.side .note {
+  font-size: 12px; color: var(--text-dim); line-height: 1.55;
+  border-left: 2px solid var(--line); padding-left: 10px; margin-top: 12px;
+}
+.side .note.warn { border-color: var(--amber); color: var(--amber); }
+
+.stalist { font-family: var(--mono); font-size: 12.5px; color: var(--text-dim); }
+.stalist > div {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 3px 0;
+}
+button.act.tiny { padding: 2px 8px; font-size: 11px; font-family: var(--mono); }
+
+.finding { border-left: 2px solid var(--line); padding: 2px 0 2px 10px; margin-bottom: 10px; }
+.finding.determined { border-color: var(--red); }
+.finding.evidence   { border-color: var(--violet); }
+/* Not currently reachable - the unclassified tier is the absence of a finding rather than a
+   row - but the tier is a stored value and a future one would otherwise render unmarked. */
+.finding.unclassified { border-color: var(--line); }
+.finding b { display: block; font-size: 13px; margin-bottom: 3px; }
+.finding p { margin: 0 0 6px; font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+.finding ul { margin: 0; padding-left: 16px; font-size: 12px; color: var(--text-dim); }
+
+/* ---------- overview ---------- */
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.card { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.card.off { opacity: .6; border-style: dashed; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.card-head h3 { margin: 0; }
+.card-head-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+/* Adapter on/off as a sliding toggle: a label plus a pill track with a knob that slides to the
+   side matching the state, so it reads at a glance as something you flip rather than a button. */
+.toggle {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  border: 0; background: none; padding: 0; font: inherit;
+}
+.toggle-label { font-size: 11px; font-weight: 700; letter-spacing: .05em; }
+.toggle-track {
+  position: relative; width: 40px; height: 20px; border-radius: 999px;
+  background: var(--bg-inset); border: 1px solid var(--line); transition: background .15s, border-color .15s;
+}
+.toggle-knob {
+  position: absolute; top: 1px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--text-dim); transition: left .15s, background .15s;
+}
+.toggle.is-on .toggle-label { color: var(--accent); }
+.toggle.is-on .toggle-track { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); }
+.toggle.is-on .toggle-knob { left: 21px; background: var(--accent); }
+.toggle.is-off .toggle-label { color: var(--red); }
+.toggle.is-off .toggle-track { border-color: var(--red); }
+.toggle.is-off .toggle-knob { left: 1px; background: var(--red); }
+.sys-checks { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 16px; }
+.sys-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.sys-rows { display: flex; flex-direction: column; gap: 6px; }
+.sys-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.sys-name { font-weight: 600; min-width: 110px; }
+.reg-sel { background: var(--bg-inset); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-family: inherit; font-size: 13px; }
+.reg-sel:focus { outline: none; border-color: var(--cyan); }
+.sys-detail { color: var(--text-dim); flex: 1; }
+/* A finding is a collapsible section (details/summary); its open state is remembered across the
+   background poll, so it never snaps shut under the operator. */
+.finding-group { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; }
+.finding-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; cursor: pointer; user-select: none; list-style-position: inside; }
+.finding-head:hover { background: color-mix(in srgb, var(--cyan) 5%, transparent); }
+.finding-body { padding: 0 14px 12px; }
+.finding-desc { color: var(--text-dim); font-size: 12.5px; line-height: 1.6; margin: 6px 0 16px; }
+.affected { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.affected th { text-align: left; color: var(--text-faint); font-weight: 500; padding: 2px 8px; }
+.affected td { padding: 2px 8px; border-top: 1px solid var(--line-soft); }
+.affected .mono { font-family: var(--mono); }
+
+/* Collapsible per-finding evidence: the observed facts behind the conclusion, folded away until
+   opened so the findings list stays scannable. */
+.evidence { margin-top: 10px; border-top: 1px solid var(--line-soft); }
+.evidence > summary {
+  cursor: pointer; padding: 8px 0 2px; font-size: 12px; color: var(--text-dim);
+  user-select: none; list-style-position: inside;
+}
+.evidence > summary:hover { color: var(--text); }
+.evidence-body { padding: 4px 0 6px; font-size: 12.5px; }
+/* The "what to look at" pointer above the block: the finding tied to the packet field it rests on. */
+.evidence-note {
+  margin: 2px 0 6px; padding: 6px 9px; font-size: 12.5px; line-height: 1.45;
+  color: var(--text); background: var(--bg-inset); border-left: 3px solid var(--accent);
+  border-radius: 4px;
+}
+/* The evidence itself: a plain, aligned tshark-style block the operator can read and paste. */
+.evidence-pre {
+  font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+  word-break: break-word; margin: 2px 0 8px; padding: 8px 10px;
+  background: var(--bg-inset); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); user-select: all; max-height: 340px; overflow: auto;
+}
+/* Channel controls, stacked one per row: sweep channels, pin-to-channel, skip 5 GHz, random hop,
+   then Apply. Each row lays its label on the left and its control on the right so they line up. */
+.chan { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; }
+.chan-in { display: flex; align-items: center; gap: 8px; }
+.chan-in > .muted:first-child { min-width: 92px; color: var(--text-faint); }
+.chan-in input.fbox { flex: 1; min-width: 0; }
+.chan .chk { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
+.chan > .act { align-self: flex-start; }
+/* The pin box is a short channel number, not a full-width field, and its button follows it. */
+.chan-in.pin input.fbox { flex: 0 0 64px; }
+.chan-in.pin { flex-wrap: wrap; }
+
+/* A themed form input: dark inset ground, not the browser's white box. Both the sweep-channels and
+   pin-to-channel fields use it so neither stands out as an odd colour. */
+.fbox {
+  padding: 6px 8px; font-family: var(--mono); font-size: 12.5px;
+  background: var(--bg-inset); border: 1px solid var(--line);
+  border-radius: 5px; color: var(--text);
+}
+.fbox:focus { outline: none; border-color: var(--cyan); }
+.card .k { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.card .v { font-family: var(--mono); font-size: 26px; margin-top: 4px; }
+/* A fitted text value (a walkthrough name): its font size is set inline by length; if a name is
+   extreme even at the smallest step, wrap it rather than let it run past the card edge. */
+.card .v.fit { overflow-wrap: anywhere; line-height: 1.2; }
+.card .m { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+.card h3 { margin: 0 0 8px; font-size: 13px; }
+.card .sub { color: var(--text-dim); font-size: 12px; font-family: var(--mono); margin-bottom: 8px; }
+.card dl { margin: 0; }
+/* Action buttons inside a card (the enterprise cards' Clone certificate / Start evil twin) sit in
+   a row with a clear gap and share the width equally, so they read as a matched pair rather than
+   two buttons of different sizes jammed together. */
+.card .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.card .actions button.act { flex: 1 1 0; min-width: 140px; }
+
+/* Radios tab: wider cards, and the per-adapter facts as a banded two-column table so a card fits
+   more without scrolling and reads cleanly. */
+.radio-cards { grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); }
+.radio-cards dl {
+  display: grid; grid-template-columns: 116px 1fr; margin-top: 10px;
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+}
+.radio-cards dl dt { padding: 5px 10px; color: var(--text-faint); font-size: 12px; }
+.radio-cards dl dd { padding: 5px 10px; margin: 0; font-size: 12.5px; font-family: var(--mono); word-break: break-word; }
+.radio-cards dl dt:nth-of-type(even), .radio-cards dl dd:nth-of-type(even) {
+  background: color-mix(in srgb, var(--bg-inset) 55%, transparent);
+}
+
+/* A monospaced cell that may hold something long - a hash line, a certificate subject. It
+   wraps rather than forcing the table wider than the pane. */
+.mono { font-family: var(--mono); font-size: 12px; }
+.wrap { white-space: normal; word-break: break-all; }
+
+/* A compact banded table for small logs such as the walkthrough list on the overview. Its header
+   is a plain (non-sticky) header - the sticky treatment is only for the big scrolling data tables;
+   on a short overview table a pinned header just floats over the rows. */
+.banded { width: 100%; border-collapse: collapse; font-size: 13px; }
+.banded thead th { position: static; box-shadow: none; background: transparent; }
+.banded th { text-align: left; color: var(--text-dim); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.banded td { padding: 6px 10px; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
+.banded tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--bg-inset) 45%, transparent); }
+.banded .num { text-align: right; font-variant-numeric: tabular-nums; }
+.walk-row td:last-child { text-align: right; }
+/* Expandable walkthrough rows: the name/metrics cells toggle the device roll. */
+.walk-row td:not(:last-child) { cursor: pointer; }
+.walk-row:hover td:not(:last-child) { background: color-mix(in srgb, var(--cyan) 8%, transparent); }
+.walk-row .caret { display: inline-block; width: 12px; color: var(--text-dim); }
+.walk-name { font-weight: 500; }
+.walk-detail > td { padding: 0 0 8px 24px; background: transparent; }
+.banded.sub { margin: 4px 0; font-size: 12.5px; }
+.walk-sub-h { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); margin: 6px 0 2px; }
+/* A clear break between the access-point and client sub-tables in an expanded walkthrough. */
+.walk-clients { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.banded.sub tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--bg-inset) 30%, transparent); }
+
+/* The certificate library. One block per network, because a certificate belongs to exactly
+   one network and mixing them would make "which one goes on the air" ambiguous. */
+.certnet { margin-bottom: 22px; }
+.certnet h4 {
+  margin: 0 0 8px; font-size: 13px; font-family: var(--mono); color: var(--cyan);
+  letter-spacing: .03em;
+}
+
+/* The certificate wizard, collapsed until wanted: it is a dozen fields and it is not what an
+   operator is looking at most of the time. */
+.wizard { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.wizard summary {
+  padding: 8px 12px; cursor: pointer; font-size: 13px; color: var(--text-dim);
+  user-select: none;
+}
+.wizard summary:hover { color: var(--text); }
+.wizard > *:not(summary) { padding: 0 12px; }
+.wizard > *:last-child { padding-bottom: 12px; }
+
+.fields {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px; margin: 10px 0;
+}
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field span {
+  color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+}
+.field input {
+  padding: 7px 9px; font-family: var(--mono); font-size: 12.5px;
+  background: var(--bg-inset); border: 1px solid var(--line);
+  border-radius: 5px; color: var(--text);
+}
+.field input:focus { outline: none; border-color: var(--cyan); }
+
+/* Pinning a radio: a channel box and a button, inline. */
+.pin { display: flex; gap: 6px; align-items: center; }
+.pin input {
+  width: 68px; padding: 6px 8px; font-family: var(--mono); font-size: 12.5px;
+  background: var(--bg-inset); border: 1px solid var(--line);
+  border-radius: 5px; color: var(--text);
+}
+.pin input:focus { outline: none; border-color: var(--cyan); }
+
+/* A plain table for panes that build one directly rather than through table(). */
+.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.grid th { text-align: left; padding: 6px 10px; color: var(--text-faint); font-size: 11px;
+           text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--line); }
+.grid td { padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.grid tr:nth-child(even) td { background: color-mix(in srgb, var(--text) 3%, transparent); }
+
+.caps { display: grid; gap: 8px; }
+.cap { display: grid; grid-template-columns: 20px 1fr; gap: 10px; align-items: start; font-size: 13px; }
+.cap .why { color: var(--text-faint); font-size: 12px; margin-top: 2px; line-height: 1.5; }
+
+h1.section { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); margin: 20px 0 10px; font-weight: 500; }
+
+/* ---------- log ---------- */
+
+#log { font-family: var(--mono); font-size: 12.5px; line-height: 1.65; }
+#log div { padding: 1px 0; }
+#log .ts { color: var(--text-faint); margin-right: 8px; }
+
+/* ---------- toast ---------- */
+
+#toasts { position: fixed; bottom: 16px; right: 16px; display: grid; gap: 8px; z-index: 50; max-width: 420px; }
+.toast {
+  background: var(--bg-raised); border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: 6px; padding: 10px 14px; font-size: 13px; line-height: 1.45;
+  animation: slide .18s ease-out;
+}
+.toast.ok   { border-left-color: var(--accent); }
+.toast.err  { border-left-color: var(--red); }
+.toast.deny { border-left-color: var(--amber); }
+.toast b { display: block; margin-bottom: 2px; }
+@keyframes slide { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+
+/* On a narrow screen the detail panel stacks under the table rather than disappearing.
+   Hiding it would mean a phone shows the rows but never the rationale behind a finding,
+   which is the part worth reading. */
+@media (max-width: 900px) {
+  main, main.split { grid-template-columns: 1fr; grid-template-rows: auto; overflow: auto; }
+  .pane { overflow: visible; }
+  .side { overflow: visible; border-left: 0; border-top: 1px solid var(--line); }
+  .side:empty { display: none; }
+  .stats { margin-left: 0; }
+}
