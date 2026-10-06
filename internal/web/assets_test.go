@@ -249,8 +249,10 @@ func TestEveryElementIDTheScriptNeedsExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// IDs the script creates itself rather than looking up in the document.
-	created := map[string]bool{"log": true}
+	// IDs the script creates itself rather than looking up in the document. "log" is the log pane's
+	// body; "eap-cards" is the running evil twin's card row, created in paneEvilTwin and refreshed
+	// in place by renderEapLive.
+	created := map[string]bool{"log": true, "eap-cards": true}
 
 	ids := map[string]bool{}
 	for _, m := range regexp.MustCompile(`\$\('#([A-Za-z0-9_-]+)'\)`).

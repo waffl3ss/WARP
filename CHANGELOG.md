@@ -11,6 +11,118 @@ second one.
 
 ---
 
+## [v0.29.0] - 2026-10-06
+
+### Added
+
+- **BSSID selection reaches the CLI and TUI, not just the web.** `warp eap start` gained a `--bssid`
+  flag to wear a specific observed BSSID (validated against what WARP has seen, same as the web), and
+  the terminal dashboard can start the evil twin against the enterprise access point under the cursor
+  on the Access Points tab (`S`), wearing that BSSID. Keeps all three clients at capability parity
+  (invariant 9).
+
+- **TUI marks 802.1X captures as not crackable.** A PMKID or handshake overheard from a
+  WPA-Enterprise network now shows as `802.1X` with "not crackable" in the terminal credentials
+  table, instead of reading as crackable PSK material - the same honesty the web credentials tab
+  enforces.
+
+- **TUI explains the injection state.** Each adapter's injection line on the Radios tab carries a
+  one-line explanation; "inconclusive" reads as "not a failure, transmitting proceeds" so two
+  identical mt76x2u cards coming up differently is no longer confusing.
+
+## [v0.28.0] - 2026-10-06
+
+### Added
+
+- **Evil Twin BSSID selection.** When several access points broadcast the scoped network name, the
+  target card now has a dropdown to pick which observed BSSID the rogue clones its certificate from
+  and wears as its own MAC, rather than always the strongest. The list only ever offers addresses
+  WARP has discovered on the air for that ESSID, and the daemon validates the choice again on start
+  (`eap/start` gained a `bssid` field that is refused unless it was observed broadcasting the scoped
+  name) - selection among discovered addresses, never a hand-typed target, and the ESSID still
+  authorizes (invariant 1).
+
+### Changed
+
+- **The in-scope control is a real on/off switch.** The engagement-wide in-scope toggle in the top
+  bar is now the same red/green sliding switch as the per-adapter toggles on the Radios tab, and it
+  sits immediately to the left of the lock button.
+
+### Fixed
+
+- **Evil Twin running timer sits beside Stop.** The live timer is now grouped with the Stop button at
+  the right of the red running banner, instead of being stranded next to the capture count.
+
+## [v0.27.0] - 2026-10-06
+
+### Added
+
+- **Evil Twin running timer.** The red running banner now shows how long the rogue AP has been on
+  the air, immediately to the left of the Stop button, and the running view gained **running for**
+  and **associations** cards alongside requests / challenges / captured.
+
+### Changed
+
+- **Evil Twin "not running" intro is compact.** The large centred placeholder that pushed the real
+  controls below the fold is now a tight left-aligned note.
+
+- **Radios tab explains injection state.** Each adapter's injection line carries a one-line
+  explanation (and tooltip). "inconclusive" now reads as what it is - the driver took the frames but
+  did not loop them back, common on mt76, not a failure, transmitting proceeds - so two identical
+  mt76x2u cards reading differently is no longer confusing. Only "failed" blocks work.
+
+### Fixed
+
+- **Evil Twin live output no longer fights the poll.** The console element is cached and re-used
+  instead of rebuilt every 2 s, so resizing it is no longer aborted by a refresh and the scrollbar
+  no longer blinks; a press inside it also holds the background rebuild off until release. The target
+  picker's "N BSSIDs broadcasting this name" list now keeps its open state across a refresh instead
+  of snapping shut.
+
+## [v0.26.0] - 2026-10-06
+
+### Added
+
+- **Evil Twin certificate feedback.** The running view now shows the presented certificate in full
+  - subject, issuer, SHA-256 fingerprint, the SANs a strict client actually checks, the validity
+  window and the key - so an operator can confirm exactly what was cloned and, when a client
+  refuses, see what it checked. Every certificate in the library gained a `details` toggle that
+  reveals the same, with its open state kept across the background poll.
+
+- **Evil Twin live output box (EAPHammer-style).** A resizable console on the Evil Twin tab streams
+  the rogue AP's own events - associations, credential captures, certificate events - each tagged by
+  what it is (ASSOC / CRED / CERT / REJECT). Drag it to any size for a clean screenshot; the size is
+  remembered across re-renders. It filters the shared event stream to just the rogue AP, and lingers
+  after a stop so a run can still be captured.
+
+- **Evil Twin target picker.** A crowded enterprise site that puts dozens of BSSIDs on the air under
+  a few names used to render as an unreadable wall of cards. It is now one dropdown of the scoped
+  enterprise networks plus one focused panel: the BSSIDs discovered broadcasting the selected name
+  (discovered, never configured), the strongest radio and channel to harvest/beacon from, whether a
+  certificate is ready, and the Clone/Start actions. Readable whatever the AP count.
+
+## [v0.25.0] - 2026-10-06
+
+### Added
+
+- **Engagement-wide "in scope only" toggle.** A single toggle in the dashboard header, beside the
+  lock, narrows every tab - APs, clients, findings and credentials - to networks the SoW covers.
+  It drives the same flag the per-tab "in scope only" checkboxes do, so setting it anywhere sets it
+  everywhere and each tab's checkbox reflects it. Off by default; nothing is hidden until asked.
+
+- **Credentials tab honours the scope filter.** The credentials/hashes tab now has its own "in scope
+  only" checkbox (wired to the engagement-wide toggle), so incidental out-of-scope captures can be
+  narrowed out of view there like everywhere else. The empty state explains when captures exist but
+  are all out of scope, rather than reading as "nothing captured."
+
+- **802.1X captures filed separately and never announced as a win.** A PMKID or four-way handshake
+  overheard from a WPA-Enterprise (802.1X) network is still captured and kept as evidence, but its
+  pairwise key comes from the RADIUS exchange, not a passphrase - no hashcat 22000 wordlist can
+  recover anything. These now sit in their own "802.1X captures - not crackable" table on the
+  credentials tab, clearly labelled and kept out of the PSK material headed for the rig, and the
+  live notification for one is dropped to an informational log line (no tray toast) so it never
+  reads as a crackable recovery. The split keys off the observed AP's advertised security class.
+
 ## [v0.24.0] - 2026-09-28
 
 ### Added

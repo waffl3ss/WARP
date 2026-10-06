@@ -24,12 +24,20 @@ const S = {
   regdomain: null,  // current regulatory domain, fetched once on the radios tab
   regPending: null, // the operator's in-progress country choice, before Apply
   wizardOpen: {},   // which wizard panels are expanded
+  certOpen: {},     // which certificate detail panels are expanded (persist across polls)
+  eapTarget: '',    // the ESSID picked in the Evil Twin target selector, so 100+ enterprise APs
+                    // collapse to one dropdown and one focused panel instead of a wall of cards
+  eapCloneBSSID: {}, // per-target: which observed BSSID the operator chose to clone/wear, so the
+                     // twin can mirror a specific access point rather than always the strongest
+  eapFeedW: 0,      // operator-resized width of the Evil Twin live feed, kept across re-renders
+  eapFeedH: 0,      // operator-resized height of the same, so the 2 s poll does not snap it back
   sel: {},          // selected row id per tab
   filter: {},       // search text per tab
   sort: {},         // {key, dir} per tab
-  scopedOnly: false,
-  stationsScopedOnly: false, // clients tab: narrow to clients on/probing scoped networks
-  findingsScopedOnly: false, // findings tab: narrow findings + unclassified to scoped networks
+  inScopeOnly: false, // one engagement-wide scope filter. The header toggle and every per-tab
+                      // checkbox read and write this single flag, so narrowing to scope on the
+                      // APs tab narrows the clients, findings and credentials tabs the same way -
+                      // an operator sets "in scope only" once and the whole dashboard honours it.
   huntMuted: true,  // hunt audible cue starts muted; the speaker toggle on the hunt bar turns it on
   log: [],
   busy: new Set(),
@@ -679,6 +687,18 @@ const hhmmss = (iso) => { const p = tsParts(iso); return p ? p.time : '(none)'; 
 const stamp = (iso) => { const p = tsParts(iso); return p ? `${p.date} ${p.time}` : '(none)'; };
 const day = (iso) => { const p = tsParts(iso); return p ? p.date : '(none)'; };
 
+// elapsed formats how long ago an ISO timestamp was, as a running clock - H:MM:SS over an hour,
+// MM:SS under one. Used for the live evil-twin "running for" timer, which updates each poll.
+function elapsed(iso) {
+  const t = Date.parse(iso);
+  if (!iso || Number.isNaN(t)) return '0:00';
+  let s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60); s -= m * 60;
+  const p2 = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${p2(m)}:${p2(s)}` : `${m}:${p2(s)}`;
+}
+
 // seenAge renders how long ago an AP was last heard, compactly (12s, 4m, 2h).
 function seenAge(secs) {
   const s = Math.max(0, secs ?? 0);
@@ -1037,6 +1057,23 @@ function renderHeader() {
   cap.onclick = () => act('recon', live ? '/api/recon/stop' : '/api/recon/start', null,
     live ? 'capture stopped' : 'capture started');
 
+  // Engagement-wide in-scope toggle, immediately left of the lock. A red/green sliding switch,
+  // the same component as the per-adapter on/off toggles on the Radios tab, so it reads at a glance
+  // as something you flip. It drives the one S.inScopeOnly flag the per-tab "in scope only"
+  // checkboxes also read and write, so flipping it narrows the APs, clients, findings and
+  // credentials tabs together. Green/on = in-scope only; red/off = every observed network.
+  const scopeBtn = $('#scopeBtn');
+  scopeBtn.className = 'toggle header-scope ' + (S.inScopeOnly ? 'is-on' : 'is-off');
+  scopeBtn.setAttribute('role', 'switch');
+  scopeBtn.setAttribute('aria-checked', S.inScopeOnly ? 'true' : 'false');
+  scopeBtn.title = S.inScopeOnly
+    ? 'In-scope only is ON - every tab is narrowed to the SoW scope. Click to show everything.'
+    : 'In-scope only is OFF - every observed network is shown. Click to narrow to the SoW scope.';
+  scopeBtn.replaceChildren(
+    el('span', { class: 'toggle-label' }, 'IN SCOPE'),
+    el('span', { class: 'toggle-track' }, el('span', { class: 'toggle-knob' })));
+  scopeBtn.onclick = () => { S.inScopeOnly = !S.inScopeOnly; render(); };
+
   // One row per adapter. On a multi-card kit the operator's first question is which card is
   // sweeping, which is transmitting, and what channel each is on - that does not fit on a
   // shared line.
@@ -1127,12 +1164,20 @@ function renderHeader() {
         // The correct client behaviour. Shown so it is not read as a fault in the tool.
         ? el('span', { class: 'why' }, `${eap.stats.certificate_refused} refused the certificate`)
         : null,
-      el('button', {
-        class: 'act danger',
-        title: 'Tear down the rogue access point and release the radio. Captured credentials '
-          + 'are kept.',
-        onclick: () => act('eapstop', '/api/eap/stop', null, 'Enterprise capture stopped'),
-      }, 'Stop evil twin'),
+      // Right-aligned group: the running timer sits immediately to the left of the Stop button.
+      // Both live in one container so the timer stays pinned beside Stop (the button alone used to
+      // float right on its own, leaving the timer stranded by the capture count).
+      el('div', { class: 'eap-right' },
+        eap.session.started
+          ? el('span', { class: 'eap-timer', title: 'how long the evil twin has been running' },
+            '⏱ ' + elapsed(eap.session.started))
+          : null,
+        el('button', {
+          class: 'act danger',
+          title: 'Tear down the rogue access point and release the radio. Captured credentials '
+            + 'are kept.',
+          onclick: () => act('eapstop', '/api/eap/stop', null, 'Enterprise capture stopped'),
+        }, 'Stop evil twin')),
     ].filter(Boolean));
   } else {
     eb.replaceChildren();
@@ -1491,7 +1536,7 @@ function paneOverview() {
 
 function paneAPs() {
   let rows = S.data.aps;
-  if (S.scopedOnly) rows = rows.filter((a) => a.in_scope);
+  if (S.inScopeOnly) rows = rows.filter((a) => a.in_scope);
 
   const cols = [
     { key: 'bssid', label: 'BSSID', cell: (a) => a.bssid, text: (a) => a.bssid, sortVal: (a) => a.bssid },
@@ -1531,8 +1576,8 @@ function paneAPs() {
     toolbar('aps', [
       el('label', {},
         el('input', {
-          type: 'checkbox', ...(S.scopedOnly ? { checked: 'checked' } : {}),
-          onchange: (e) => { S.scopedOnly = e.target.checked; render(); },
+          type: 'checkbox', ...(S.inScopeOnly ? { checked: 'checked' } : {}),
+          onchange: (e) => { S.inScopeOnly = e.target.checked; render(); },
         }), 'in scope only'),
       el('span', { class: 'muted', style: 'margin-left:auto' },
         `${rows.length} of ${S.data.aps.length}`),
@@ -1563,18 +1608,18 @@ function paneStations() {
       text: (s) => (s.probed_essids || []).join(' '),
     },
   ];
-  const rows = S.stationsScopedOnly
+  const rows = S.inScopeOnly
     ? S.data.stations.filter((s) => s.in_scope)
     : S.data.stations;
   return el('div', {},
     toolbar('stations', [
       el('label', {},
         el('input', {
-          type: 'checkbox', ...(S.stationsScopedOnly ? { checked: 'checked' } : {}),
-          onchange: (e) => { S.stationsScopedOnly = e.target.checked; render(); },
+          type: 'checkbox', ...(S.inScopeOnly ? { checked: 'checked' } : {}),
+          onchange: (e) => { S.inScopeOnly = e.target.checked; render(); },
         }), ' in scope only'),
       el('span', { class: 'muted', style: 'margin-left:auto' },
-        (S.stationsScopedOnly ? `${rows.length} of ${S.data.stations.length} · ` : '')
+        (S.inScopeOnly ? `${rows.length} of ${S.data.stations.length} · ` : '')
         + '∗ randomised MAC - may be one device seen repeatedly'),
     ]),
     table('stations', cols, rows, (s) => s.mac, { sticky: true }));
@@ -1587,9 +1632,47 @@ function paneStations() {
 // deauthentication get me anything".
 function paneHashes() {
   const h = S.data.hashes || {};
-  const rows = h.hashes || [];
-  const creds = (S.data.eap && S.data.eap.captured) || [];
-  const wps = h.wps_keys || [];
+  let allRows = h.hashes || [];
+  let creds = (S.data.eap && S.data.eap.captured) || [];
+  let wps = h.wps_keys || [];
+
+  // Cross-reference the observed AP population so a captured PMKID/handshake can be told apart by
+  // the security its BSSID actually advertises. A PMKID or four-way handshake from an 802.1X
+  // (WPA-Enterprise) network is real evidence, but its PMK comes from the RADIUS exchange, not a
+  // passphrase - there is nothing for a 22000 wordlist to recover. Listing it beside crackable
+  // PSK material invites an operator to queue a job that can never finish, so it goes in its own
+  // table, clearly labelled not crackable, and never gets announced as a win in the tray.
+  const apSecByBSSID = {};
+  const apInScopeByBSSID = {};
+  const scopedESSIDs = new Set();
+  for (const a of (S.data.aps || [])) {
+    const b = (a.bssid || '').toLowerCase();
+    apSecByBSSID[b] = a.security?.class || '';
+    apInScopeByBSSID[b] = !!a.in_scope;
+    if (a.in_scope && a.essid) scopedESSIDs.add(a.essid.toLowerCase());
+  }
+  const isEnterprise = (r) => {
+    const c = apSecByBSSID[(r.bssid || '').toLowerCase()];
+    return c === 'wpa_enterprise' || c === 'wpa3_enterprise_192';
+  };
+
+  // The engagement-wide in-scope toggle narrows every section of this tab. A capture's own
+  // in_scope flag is authoritative when it carries one (the PSK rows do); otherwise fall back to
+  // the observed AP population, and when a credential names a network WARP cannot currently see,
+  // keep it rather than hide a deliverable.
+  if (S.inScopeOnly) {
+    allRows = allRows.filter((r) => r.in_scope);
+    creds = creds.filter((o) => !o.essid || scopedESSIDs.has((o.essid || '').toLowerCase()));
+    wps = wps.filter((o) => {
+      const b = (o.bssid || '').toLowerCase();
+      if (b in apInScopeByBSSID) return apInScopeByBSSID[b];
+      return !o.essid || scopedESSIDs.has((o.essid || '').toLowerCase());
+    });
+  }
+
+  // Split PSK (crackable) from enterprise (not crackable) captures.
+  const rows = allRows.filter((r) => !isEnterprise(r));
+  const entRows = allRows.filter((r) => isEnterprise(r));
 
   // WPS-recovered credentials: already cracked, so they sit with the credentials, not the hashes
   // headed for the rig. The PIN is always present; the passphrase is there when the exchange read
@@ -1656,8 +1739,14 @@ function paneHashes() {
         el('code', {}, '-m 5500'), '. Written to ',
         el('code', {}, S.data.eap.creds_file || 'creds/mschapv2.5500'), '.')) : null;
 
-  if (!rows.length && !creds.length && !wps.length) {
+  if (!rows.length && !entRows.length && !creds.length && !wps.length) {
     const pending = h.pending_essid || 0;
+    if (S.inScopeOnly && ((h.hashes || []).length || ((S.data.eap && S.data.eap.captured) || []).length || (h.wps_keys || []).length)) {
+      return el('div', { class: 'empty' },
+        el('b', {}, 'Nothing in scope captured yet.'),
+        'Captures exist, but all of them are from out-of-scope networks. Turn off "in scope ' +
+        'only" (the toggle in the header, or the checkbox on another tab) to see them.');
+    }
     return el('div', { class: 'empty' },
       el('b', {}, pending
         ? `${pending} handshake(s) held, waiting for a network name.`
@@ -1711,8 +1800,13 @@ function paneHashes() {
   const pskMaterial = rows.length ? el('div', {},
     el('h1', { class: 'section' }, 'PSK material'),
     toolbar('hashes', [
+      el('label', {},
+        el('input', {
+          type: 'checkbox', ...(S.inScopeOnly ? { checked: 'checked' } : {}),
+          onchange: (e) => { S.inScopeOnly = e.target.checked; render(); },
+        }), ' in scope only'),
       el('span', { class: 'muted', style: 'margin-left:auto' },
-        `${h.pmkid || 0} PMKID · ${h.handshake || 0} handshake`,
+        `${rows.length} shown · ${h.pmkid || 0} PMKID · ${h.handshake || 0} handshake`,
         h.out_of_scope ? el('span', { class: 'bad' }, ` · ${h.out_of_scope} incidental`) : null),
     ]),
     table('hashes', cols, rows, (r) => r.line),
@@ -1739,7 +1833,20 @@ function paneHashes() {
         ', which a *.22000 glob will not pick up.')
       : null) : null;
 
-  return el('div', {}, enterprise, wpsSection, pskMaterial);
+  // 802.1X PMKID/handshakes: captured and kept as evidence, but the PMK is derived from the
+  // RADIUS exchange, not a passphrase, so no 22000 wordlist can recover anything. Shown in their
+  // own table so they are never confused with crackable PSK material or queued on the rig.
+  const entMaterial = entRows.length ? el('div', { style: 'margin-top:22px' },
+    el('h1', { class: 'section' }, `802.1X captures - not crackable (${entRows.length})`),
+    table('enthashes', cols, entRows, (r) => r.line),
+    el('div', { class: 'note warn', style: 'margin-top:14px' },
+      'These came off ', el('b', {}, 'WPA-Enterprise (802.1X)'), ' networks. The pairwise key ',
+      'is derived from the 802.1X/RADIUS exchange, not a passphrase, so there is nothing for a ',
+      'hashcat 22000 wordlist to recover - do not send these to the cracking rig. The credential ',
+      'worth capturing on an enterprise network is the MSCHAPv2 exchange (mode 5500) from the ',
+      'evil-twin RADIUS server, which lands in ', el('code', {}, 'creds/'), '.')) : null;
+
+  return el('div', {}, enterprise, wpsSection, pskMaterial, entMaterial);
 }
 
 // tierRank orders tiers most-severe first for grouping.
@@ -1846,7 +1953,7 @@ function findingCard(g, apByBssid) {
 
 function paneFindings() {
   const all = S.data.findings || [];
-  const scopedOnly = S.findingsScopedOnly;
+  const scopedOnly = S.inScopeOnly;
   // The in-scope filter narrows both findings and the unclassified list to networks the SoW
   // covers - the out-of-scope ones are noise on most engagements. It is off by default so nothing
   // is hidden until the operator asks: some rogue findings (evil-twin candidate, karma responder)
@@ -1912,7 +2019,7 @@ function paneFindings() {
       el('label', { style: 'margin-left:12px' },
         el('input', {
           type: 'checkbox', ...(scopedOnly ? { checked: 'checked' } : {}),
-          onchange: (e) => { S.findingsScopedOnly = e.target.checked; render(); },
+          onchange: (e) => { S.inScopeOnly = e.target.checked; render(); },
         }), ' in scope only'),
       el('span', { class: 'muted', style: 'margin-left:auto' },
         scopedOnly ? `${shown} of ${total} findings` : `${total} findings`),
@@ -2046,9 +2153,20 @@ function paneRadios() {
 
   // Injection state decides whether every transmitting attack is even offered, so it is the
   // one field that gets a colour. "Inconclusive" is not a failure - many drivers do not loop
-  // their own transmissions back to the monitor socket.
+  // their own transmissions back to the monitor socket, so two identical cards (e.g. a pair of
+  // mt76x2u) can legitimately read differently: one happened to catch its own test frame, the
+  // other did not. Both transmit. Only "failed" blocks work (invariant 7a).
   const injClass = (v) => (String(v).includes('verified') ? 'good'
     : String(v).includes('failed') ? 'bad' : 'warn');
+  const injNote = (v) => ({
+    verified: 'a test frame was injected and seen coming back - injection confirmed.',
+    inconclusive: 'the driver accepted the test frames but none looped back to the monitor - '
+      + 'common on mt76 and not a failure. Transmitting work proceeds; two identical cards often '
+      + 'differ here for no reason that affects an attack.',
+    failed: 'the driver rejected the injected frame - this adapter cannot transmit, so active '
+      + 'attacks are not offered on it.',
+    untested: 'not probed yet - it is measured the first time a transmitting attack needs it.',
+  })[String(v)] || '';
 
   const lvlClass = (l) => ({ ok: 'good', info: 'muted', warn: 'warn', fixable: 'warn', fail: 'bad' }[l] || '');
   const pc = S.precheck;
@@ -2184,7 +2302,12 @@ function paneRadios() {
         el('dt', {}, 'bands'), el('dd', {}, (r.bands || []).join(', ') || '-'),
         el('dt', {}, 'channels'), el('dd', {}, `${r.usable_channels || 0} usable`),
         el('dt', {}, 'injection'),
-        el('dd', {}, el('span', { class: injClass(r.injection) }, r.injection || 'unknown')),
+        el('dd', {},
+          el('span', { class: injClass(r.injection), title: injNote(r.injection) },
+            r.injection || 'unknown'),
+          injNote(r.injection)
+            ? el('div', { class: 'muted inj-note' }, injNote(r.injection))
+            : null),
         el('dt', {}, 'modes'), el('dd', {}, (r.supported_iftypes || []).join(', ') || '-'),
         r.ap_monitor_concurrent ? el('dt', {}, 'concurrent') : null,
         r.ap_monitor_concurrent ? el('dd', {}, 'AP and monitor at the same time') : null,
@@ -2208,50 +2331,138 @@ function paneRadios() {
 
 /* ---------------------------------------------------------------- evil twin */
 
+// eviltwinTargetPicker replaces the wall of per-AP cards with one dropdown and one focused panel.
+//
+// An enterprise site can put a hundred BSSIDs on the air under a handful of names, and a card per
+// BSSID was unreadable and misleading - the rogue impersonates by ESSID, not BSSID, so a dozen
+// cards for one network all did the same thing. This groups the in-scope enterprise APs by the
+// name the operator actually targets, lets them pick one, and shows that target in full: the
+// BSSIDs discovered broadcasting it (never configured - invariant 1), the channel and strongest
+// radio to harvest from, whether a certificate is ready, and the two actions. Everything stays on
+// screen whatever the AP count.
+function eviltwinTargetPicker() {
+  const isEnt = (a) => a.security?.class === 'wpa_enterprise'
+    || a.security?.class === 'wpa3_enterprise_192';
+  const enterprise = (S.data.aps || []).filter((a) => isEnt(a) && a.in_scope && a.essid);
+  if (!enterprise.length) {
+    return el('div', { class: 'note' },
+      'No scoped WPA-Enterprise networks observed yet. Run recon, and add the network to '
+      + 'scope if it is not already there.');
+  }
+
+  const byEssid = new Map();
+  for (const a of enterprise) {
+    if (!byEssid.has(a.essid)) byEssid.set(a.essid, []);
+    byEssid.get(a.essid).push(a);
+  }
+  const essids = [...byEssid.keys()].sort();
+  const sel = byEssid.has(S.eapTarget) ? S.eapTarget : essids[0];
+  const group = byEssid.get(sel) || [];
+
+  // Observed BSSIDs for this name, strongest first. The operator picks which one to clone from and
+  // wear (the rogue mirrors a specific access point); it defaults to the strongest. Every entry is
+  // discovered from the air - the dropdown can only offer addresses WARP has seen, never a typed
+  // one, and the daemon validates the choice again (invariant 1).
+  const ranked = group.slice().sort((a, b) =>
+    (b.has_rssi ? b.last_rssi : -999) - (a.has_rssi ? a.last_rssi : -999));
+  const strongest = ranked[0] || group[0];
+  const chosenBSSID = ranked.some((a) => a.bssid === S.eapCloneBSSID[sel])
+    ? S.eapCloneBSSID[sel]
+    : strongest.bssid;
+  const chosen = ranked.find((a) => a.bssid === chosenBSSID) || strongest;
+
+  const certs = ((S.data.certs && S.data.certs.networks) || {})[sel] || [];
+  const selectedCert = certs.find((c) => c.selected);
+  const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+  const bssidLabel = (a) => a.bssid + '  ch' + (a.channel || '?')
+    + (a.has_rssi ? '  ' + a.last_rssi + ' dBm' : '')
+    + (a === strongest ? '  (strongest)' : '');
+
+  return el('div', {},
+    el('h3', {}, 'Target'),
+    el('div', { class: 'targetpick' },
+      el('select', {
+        class: 'target-select',
+        onchange: (ev) => { S.eapTarget = ev.target.value; render(); },
+      }, ...essids.map((name) => el('option', {
+        value: name, ...(name === sel ? { selected: true } : {}),
+      }, name + '  (' + plural(byEssid.get(name).length, 'BSSID') + ')'))),
+      el('span', { class: 'muted' },
+        plural(essids.length, 'scoped enterprise network') + ' in range')),
+
+    el('div', { class: 'card target-card' },
+      el('div', { class: 'card-head' },
+        el('h3', {}, sel),
+        el('div', { class: 'card-head-actions' },
+          selectedCert
+            ? el('span', { class: 'tag good', title: selectedCert.source_detail }, 'cert ready')
+            : certs.length
+              ? el('span', { class: 'tag warn' }, 'cert not selected')
+              : el('span', { class: 'tag bad' }, 'no cert'))),
+
+      // BSSID selector: which observed access point to clone and wear. One entry per discovered
+      // BSSID, strongest first; the label carries its channel and signal. Picking one here drives
+      // both Clone certificate and Start evil twin below.
+      el('label', { class: 'bssid-pick' },
+        el('span', { class: 'muted' },
+          plural(group.length, 'BSSID') + ' broadcasting this name - clone/wear:'),
+        el('select', {
+          class: 'bssid-select', 'data-fkey': 'eap-bssid-' + sel,
+          onchange: (ev) => { S.eapCloneBSSID[sel] = ev.target.value; render(); },
+        }, ...ranked.map((a) => el('option', {
+          value: a.bssid, ...(a.bssid === chosenBSSID ? { selected: true } : {}),
+        }, bssidLabel(a))))),
+
+      !selectedCert
+        ? el('div', { class: 'note warn' },
+          'No certificate selected for this network. The rogue would fall back to a self-signed '
+          + 'certificate, which every client that checks will refuse. Clone the real one below, '
+          + 'or prepare one in the certificate library.')
+        : null,
+
+      el('div', { class: 'actions' },
+        el('button', {
+          class: 'act',
+          onclick: () => act('harvest:' + chosenBSSID, '/api/harvest',
+            { bssid: chosenBSSID }, 'Reading the certificate at ' + sel + ' (' + chosenBSSID + ')'),
+        }, 'Clone certificate'),
+        el('button', {
+          class: 'act primary',
+          onclick: () => {
+            confirmModal('WARP will beacon this scoped network as ' + chosenBSSID + ' and capture '
+              + 'credentials from supplicants that try to authenticate.', {
+              title: 'Impersonate "' + sel + '"?', okLabel: 'Start evil twin',
+            }).then((ok) => {
+              if (ok) act('eapstart', '/api/eap/start',
+                { essid: sel, channel: chosen.channel || 0, bssid: chosenBSSID },
+                'Impersonating ' + sel);
+            });
+          },
+        }, 'Start evil twin'))));
+}
+
 // paneEvilTwin: what is being impersonated, with what certificate, and what came out of it.
 function paneEvilTwin() {
   const e = S.data.eap || {};
 
   if (!e.running || !e.session) {
-    const enterprise = (S.data.aps || [])
-      .filter((a) => a.security?.class === 'wpa_enterprise' && a.in_scope && a.essid);
+    // Recent rogue-AP output lingers in the shared stream after a stop, which is exactly what an
+    // operator wants for a screenshot. Show the live box only when there is something in it.
+    const feedKinds = new Set(['eap', 'harvest', 'certs']);
+    const hasFeed = (S.log || []).some((x) => feedKinds.has(x.kind));
 
     return el('div', {},
-      el('div', { class: 'empty' },
+      el('div', { class: 'empty compact' },
         el('b', {}, 'Not running.'),
         el('p', {}, 'A rogue access point beacons a scoped network name with WARP\u2019s own '
-          + 'RADIUS server behind it, and records what supplicants are willing to send it.'),
-        el('p', {}, 'Clone the target\u2019s certificate first \u2014 a self-signed one '
-          + 'carrying none of its naming is refused by every client that shows the user '
-          + 'anything.')),
+          + 'RADIUS server behind it, and records what supplicants are willing to send it. '
+          + 'Clone the target\u2019s certificate first \u2014 a self-signed one carrying none of '
+          + 'its naming is refused by every client that shows the user anything.')),
 
-      enterprise.length
-        ? el('div', {},
-          el('h3', {}, 'Enterprise networks in scope'),
-          el('div', { class: 'cards' }, ...enterprise.map((a) => el('div', { class: 'card' },
-            el('h3', {}, a.essid),
-            el('div', { class: 'sub' }, a.bssid + ' · ch' + (a.channel || '?')),
-            el('div', { class: 'actions' },
-              el('button', {
-                class: 'act',
-                onclick: () => act('harvest:' + a.bssid, '/api/harvest', { bssid: a.bssid },
-                  'Reading the certificate at ' + a.essid),
-              }, 'Clone certificate'),
-              el('button', {
-                class: 'act primary',
-                onclick: () => {
-                  confirmModal('WARP will beacon this scoped network and capture credentials from '
-                    + 'supplicants that try to authenticate.', {
-                    title: 'Impersonate "' + a.essid + '"?', okLabel: 'Start evil twin',
-                  }).then((ok) => {
-                    if (ok) act('eapstart', '/api/eap/start',
-                      { essid: a.essid, channel: a.channel || 0 }, 'Impersonating ' + a.essid);
-                  });
-                },
-              }, 'Start evil twin'))))))
-        : el('div', { class: 'note' },
-          'No scoped WPA-Enterprise networks observed yet. Run recon, and add the network to '
-          + 'scope if it is not already there.'),
+      eviltwinTargetPicker(),
+
+      hasFeed ? el('h3', {}, 'Live output') : null,
+      hasFeed ? eviltwinFeed() : null,
 
       certLibrary(),
 
@@ -2282,40 +2493,187 @@ function paneEvilTwin() {
         + 'client that shows the user anything will refuse it. Clone the real certificate '
         + 'from the Access points tab and restart for the stronger pretext.'),
 
+    // RADIUS activity as cards, so the one number that matters on site - captured credentials -
+    // reads at a glance rather than being buried in a definition list. The card row has a stable
+    // id so the running timer and counters can be refreshed in place every poll without rebuilding
+    // the whole tab (renderEapLive).
     el('h3', {}, 'RADIUS'),
-    el('dl', {},
-      el('dt', {}, 'fingerprint'), el('dd', {}, s.certificate_fingerprint || '-'),
-      el('dt', {}, 'requests'), el('dd', {}, e.stats?.requests ?? 0),
-      el('dt', {}, 'challenges'), el('dd', {}, e.stats?.challenges ?? 0),
-      el('dt', {}, 'captured'), el('dd', {}, e.stats?.captured ?? 0),
-      e.stats?.certificate_refused ? el('dt', {}, 'refused') : null,
-      e.stats?.certificate_refused
-        // Correct client behaviour and a pass for those devices. Said plainly so it is never
-        // read as a fault in the tool.
-        ? el('dd', {}, el('span', { class: 'good' },
-          `${e.stats.certificate_refused} supplicant(s) rejected the certificate - correct `
-          + 'client behaviour, and a pass for those devices'))
-        : null),
+    el('div', { class: 'cards', id: 'eap-cards' }, ...eapCardsChildren(e, s)),
+
+    // The presented certificate, in full. This is the pretext: if a client refused, this is what
+    // it checked. Prefer the selected library entry (it has the whole picture) and fall back to
+    // whatever the running session reported.
+    el('h3', {}, 'Presented certificate'),
+    (() => {
+      const certList = ((S.data.certs && S.data.certs.networks) || {})[s.essid] || [];
+      const activeCert = certList.find((c) => c.selected);
+      if (activeCert) return certDetail(activeCert);
+      return el('dl', { class: 'certdetail' },
+        el('dt', {}, 'source'), el('dd', {}, s.certificate_source || 'unknown'),
+        el('dt', {}, 'subject'), el('dd', { class: 'mono wrap' }, s.certificate_subject || '-'),
+        el('dt', {}, 'issuer'), el('dd', { class: 'mono wrap' }, s.certificate_issuer || '-'),
+        el('dt', {}, 'SHA-256'), el('dd', { class: 'mono wrap' }, s.certificate_fingerprint || '-'));
+    })(),
 
     (e.clients || []).length
       ? el('div', {}, el('h3', {}, 'Associated'),
         el('ul', {}, ...e.clients.map((c) => el('li', {}, c.mac + ' since ' + hhmmss(c.since)))))
       : null,
 
+    // Live output, eaphammer-style: associations, credential captures and certificate events as
+    // they happen. Resizable for a clean screenshot.
+    el('h3', {}, 'Live output'),
+    eviltwinFeed(),
+
     el('h3', {}, 'Credentials'),
     credentialTable(e),
 
-    // Certificate rejections are not a capture and not a finding, but the operator should be able to
-    // track them: a client that validates the cert and refuses is correctly configured. Shown as a
-    // running count, since a refusing client retries several times.
-    (e.stats && e.stats.certificate_refused)
-      ? el('div', { class: 'note' },
-        `${e.stats.certificate_refused} certificate rejection(s): a supplicant validated the `
-        + 'presented certificate and refused it - that client is correctly configured (no credential '
-        + 'captured from it).')
-      : null,
-
     certLibrary());
+}
+
+// certSrcClass colours a certificate by where it came from: a mimic of the real one is the strong
+// pretext (good), an imported file is trusted input (info), a bare generated/self-signed one will
+// be refused by any client that checks (warn).
+const certSrcClass = (src) => ({
+  mimic: 'good', imported: 'info', generated: '', 'self-signed': 'warn',
+})[src] || '';
+
+// certDetail is the full picture of one certificate, the feedback an operator wants after cloning:
+// exactly what WARP captured and what the target's supplicant will be shown. Subject and issuer are
+// the naming a user sees; the SAN list is what a strict client actually checks; the SHA-256 is how
+// the clone is proven identical to the harvested original; the validity window and key say whether
+// it is even usable. Nothing here is secret - it is all public certificate material.
+function certDetail(c) {
+  const sans = (c.sans || []).filter(Boolean);
+  const fp = c.fingerprint_sha256 || c.fingerprint || '-';
+  return el('dl', { class: 'certdetail' },
+    el('dt', {}, 'subject'), el('dd', { class: 'mono wrap' }, c.subject || '-'),
+    el('dt', {}, 'issuer'), el('dd', { class: 'mono wrap' }, c.issuer || '-'),
+    el('dt', {}, 'SHA-256'), el('dd', { class: 'mono wrap' }, fp),
+    el('dt', {}, 'SAN'),
+    el('dd', { class: 'mono wrap' }, sans.length
+      ? sans.join(', ')
+      : el('span', { class: 'muted' }, 'none - a client that checks the name will refuse it')),
+    el('dt', {}, 'valid'),
+    el('dd', {}, c.expired
+      ? el('span', { class: 'bad' }, 'EXPIRED (ended ' + day(c.not_after) + ')')
+      : (day(c.not_before) + ' to ' + day(c.not_after))),
+    el('dt', {}, 'key'),
+    el('dd', {}, (c.key_algorithm || 'unknown') + (c.key_bits ? ' ' + c.key_bits + '-bit' : '')),
+    el('dt', {}, 'source'),
+    el('dd', {},
+      el('span', { class: certSrcClass(c.source) }, c.source || 'unknown'),
+      c.source_detail ? el('span', { class: 'muted' }, ' - ' + c.source_detail) : null),
+    c.note ? el('dt', {}, 'note') : null,
+    c.note ? el('dd', {}, c.note) : null,
+    (c.cert_path || c.key_path) ? el('dt', {}, 'files') : null,
+    (c.cert_path || c.key_path)
+      ? el('dd', { class: 'mono wrap muted' }, [c.cert_path, c.key_path].filter(Boolean).join('   '))
+      : null);
+}
+
+// eviltwinFeed is the live, resizable console for the rogue AP - WARP's answer to the scrolling
+// output an operator watches in eaphammer. It filters the shared event stream to just what the
+// evil twin produces (the RADIUS/EAP exchange, certificate harvest and selection) and labels each
+// line by what it is: an association, a credential capture, a certificate rejection.
+//
+// The box and its scrolling body are built ONCE and cached on S, then re-used on every render
+// rather than rebuilt. That is what makes it resizable in practice: a 2 s poll that recreated the
+// element would abort an in-progress drag and flash the scrollbar each tick (the bug the field
+// testers hit). Re-using the node means the poll only moves it, its dragged size lives on the node,
+// and only the line contents are refreshed (fillEapFeed). A press anywhere inside it also sets an
+// interacting flag so the poll holds off entirely until the mouse is released - so a drag is never
+// interrupted mid-way.
+function eviltwinFeed() {
+  if (!S._eapfeedBody) {
+    S._eapfeedBody = el('div', { class: 'console-body', id: 'eapfeed-body' });
+    // Apply any remembered size through the CSSOM (CSP forbids a style attribute). Once the node
+    // exists its own dragged size lives on it, so this only matters the first time it is built.
+    let dims = 'resize:both;overflow:auto;';
+    if (S.eapFeedH) dims += 'height:' + S.eapFeedH + 'px;';
+    if (S.eapFeedW) dims += 'width:' + S.eapFeedW + 'px;';
+    S._eapfeed = el('div', {
+      class: 'console', id: 'eapfeed', style: dims,
+      onpointerdown: () => { S._eapInteracting = true; },
+      onpointerup: (e) => {
+        S._eapInteracting = false;
+        const n = e.currentTarget;
+        if (n && n.offsetHeight) { S.eapFeedH = n.offsetHeight; S.eapFeedW = n.offsetWidth; }
+      },
+      onmouseleave: () => { S._eapInteracting = false; },
+    }, S._eapfeedBody);
+  }
+  fillEapFeed();
+  return S._eapfeed;
+}
+
+// fillEapFeed refreshes only the line contents of the cached console body, leaving the scrolling
+// container (and its dragged size and scroll position) untouched. column-reverse keeps the newest
+// line pinned to the bottom with no scroll bookkeeping.
+function fillEapFeed() {
+  if (!S._eapfeedBody) return;
+  const interesting = new Set(['eap', 'harvest', 'certs']);
+  const lines = (S.log || []).filter((e) => interesting.has(e.kind)).slice(-400);
+  S._eapfeedBody.replaceChildren(...(lines.length
+    ? lines.slice().reverse().map((e) => el('div', {
+      class: 'cl ' + (e.level === 'good' ? 'good' : e.level === 'warn' ? 'warn' : 'dim'),
+    }, el('span', { class: 'ts' }, e.at), feedTag(e), e.text))
+    : [el('div', { class: 'muted' }, 'Waiting for the first supplicant. Associations, credential '
+      + 'captures and certificate events will stream here as they happen.')]));
+}
+
+// eapCardsChildren builds the RADIUS activity cards for a running evil twin: the running timer and
+// associations alongside the request/challenge/capture counters the field testers asked for. Kept
+// as its own function so renderEapLive can refresh them in place each poll without a full rebuild.
+function eapCardsChildren(e, s) {
+  const stat = (k, v, cls, m) => el('div', { class: 'card' },
+    el('div', { class: 'k' }, k),
+    el('div', { class: 'v ' + (cls || '') }, v),
+    m ? el('div', { class: 'm' }, m) : null);
+  const assoc = (e.clients || []).length;
+  return [
+    s && s.started ? stat('running for', elapsed(s.started)) : null,
+    stat('requests', e.stats?.requests ?? 0),
+    stat('challenges', e.stats?.challenges ?? 0),
+    stat('associations', assoc, assoc ? 'good' : ''),
+    stat('captured', e.stats?.captured ?? 0, (e.stats?.captured ?? 0) ? 'good' : ''),
+    (e.stats?.certificate_refused)
+      // Correct client behaviour and a pass for those devices. Keeps the words "certificate
+      // rejection" so it reads the same as the log line and the report.
+      ? stat('cert refused', e.stats.certificate_refused, 'good',
+        'certificate rejection(s) - the client validated the cert and refused it, correctly '
+        + 'configured (no credential captured)')
+      : null,
+  ].filter(Boolean);
+}
+
+// renderEapLive refreshes the running evil twin's live regions - the counter/timer cards and the
+// output console - in place every poll, so the timer ticks and the feed streams even when the rest
+// of the tab is being held back (an in-progress resize, a text selection). It is a no-op off the
+// tab or when stopped: the elements it targets do not exist.
+function renderEapLive() {
+  const e = S.data.eap || {};
+  if (!e.running || !e.session) return;
+  const cards = $('#eap-cards');
+  if (cards) cards.replaceChildren(...eapCardsChildren(e, e.session));
+  fillEapFeed();
+}
+
+// feedTag renders a short coloured label for a live feed line, read from the event's own fields so
+// an association, a credential and a cert event are told apart at a glance.
+function feedTag(e) {
+  const f = e.fields || {};
+  if (e.kind === 'harvest') return el('span', { class: 'cl-tag info' }, 'CERT');
+  if (e.kind === 'certs') return el('span', { class: 'cl-tag info' }, 'CERT');
+  if (e.kind === 'eap') {
+    const t = String(e.text || '');
+    if (t.indexOf('CLEARTEXT') >= 0) return el('span', { class: 'cl-tag bad' }, 'CRED');
+    if (t.indexOf('MSCHAPv2') >= 0) return el('span', { class: 'cl-tag good' }, 'CRED');
+    if (t.indexOf('rejected the certificate') >= 0) return el('span', { class: 'cl-tag warn' }, 'REJECT');
+    if (f.event === 'client-join' || t.indexOf('associat') >= 0) return el('span', { class: 'cl-tag good' }, 'ASSOC');
+    return el('span', { class: 'cl-tag' }, 'EAP');
+  }
+  return el('span', { class: 'cl-tag' }, '*');
 }
 
 // certLibrary renders every certificate the engagement could put on the air, per network.
@@ -2326,10 +2684,6 @@ function paneEvilTwin() {
 function certLibrary() {
   const nets = (S.data.certs && S.data.certs.networks) || {};
   const names = Object.keys(nets).sort();
-
-  const srcClass = (src) => ({
-    mimic: 'good', imported: 'info', generated: '', 'self-signed': 'warn',
-  })[src] || '';
 
   return el('div', {},
     el('h3', {}, 'Certificate library'),
@@ -2350,12 +2704,12 @@ function certLibrary() {
               el('thead', {}, el('tr', {},
                 el('th', {}, ''), el('th', {}, 'Source'), el('th', {}, 'Subject'),
                 el('th', {}, 'Issuer'), el('th', {}, 'Expires'), el('th', {}, ''))),
-              el('tbody', {}, ...list.map((c) => el('tr', {},
+              el('tbody', {}, ...list.map((c) => [el('tr', {},
                 el('td', {},
                   c.selected
                     ? el('span', { class: 'good', title: 'the rogue will present this one' }, '●')
                     : el('span', { class: 'muted' }, '\u25cb')),
-                el('td', {}, el('span', { class: srcClass(c.source), title: c.source_detail },
+                el('td', {}, el('span', { class: certSrcClass(c.source), title: c.source_detail },
                   c.source)),
                 el('td', { class: 'mono wrap' }, c.subject),
                 el('td', { class: 'mono wrap muted' }, c.issuer),
@@ -2363,6 +2717,12 @@ function certLibrary() {
                   ? el('span', { class: 'bad' }, 'EXPIRED')
                   : day(c.not_after)),
                 el('td', { class: 'actions' },
+                  // Details reveals the full certificate - fingerprint, SANs, validity, key - so
+                  // the operator can confirm what was cloned and what a client will be shown.
+                  el('button', {
+                    class: 'act tiny' + (S.certOpen[c.id] ? ' primary' : ''),
+                    onclick: () => { S.certOpen[c.id] = !S.certOpen[c.id]; render(); },
+                  }, S.certOpen[c.id] ? 'hide' : 'details'),
                   c.selected ? null : el('button', {
                     class: 'act tiny primary',
                     onclick: () => act('certsel:' + c.id, '/api/certs/select',
@@ -2379,7 +2739,11 @@ function certLibrary() {
                           { essid: essid, id: c.id }, 'Certificate removed');
                       });
                     },
-                  }, 'delete')))))),
+                  }, 'delete'))),
+              S.certOpen[c.id]
+                ? el('tr', { class: 'certdetail-row' },
+                  el('td', { colspan: '6' }, certDetail(c)))
+                : null]))),
 
           certWizard(essid));
       })),
@@ -3191,10 +3555,16 @@ async function refresh() {
     // Keep any expanded walkthrough's device roll live while recon is still adding to it.
     if (S.tab === 'overview') refreshOpenWalkDevices();
 
+    // Refresh the running evil twin's live cards and output console in place every poll, so the
+    // timer ticks and the feed streams even when the full-body rebuild below is being held off.
+    if (S.tab === 'eviltwin') renderEapLive();
+
     // Never rebuild the body while the operator has text selected: the rebuild deselects it, and
-    // the hash line or BSSID they are mid-copy is exactly what they had selected. lastSig is left
-    // unchanged so the redraw happens on the next poll once the selection is released.
-    if (sig !== lastSig && !hasSelection() && !isInteracting()) {
+    // the hash line or BSSID they are mid-copy is exactly what they had selected. The evil-twin
+    // output box adds one more hold: while the pointer is down inside it (a resize drag), a rebuild
+    // would move the node and abort the drag. In every case lastSig is left unchanged so the redraw
+    // happens on the next poll once the interaction is released.
+    if (sig !== lastSig && !hasSelection() && !isInteracting() && !S._eapInteracting) {
       lastSig = sig;
       render();
     }
@@ -3216,6 +3586,9 @@ function stream() {
         toast(ev.level === 'good' ? 'ok' : 'deny', ev.text);
       }
       if (S.tab === 'log' && !hasSelection()) render();
+      // Stream rogue-AP events straight into the live console the moment they arrive, rather than
+      // waiting for the 2 s poll. Only the cached feed body is touched, never the whole tab.
+      if (S.tab === 'eviltwin') renderEapLive();
     } catch { /* ignore a malformed frame */ }
   };
   es.onerror = () => {

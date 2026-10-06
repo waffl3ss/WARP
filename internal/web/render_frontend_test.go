@@ -663,7 +663,7 @@ func TestFilteringAndSortingActuallyWork(t *testing.T) {
 func TestScopedOnlyToggleFilters(t *testing.T) {
 	vm := newJSRuntime(t, jsFixture)
 
-	jsRun(t, vm, `S.tab = 'aps'; S.scopedOnly = true; render();`)
+	jsRun(t, vm, `S.tab = 'aps'; S.inScopeOnly = true; render();`)
 	pane := jsRun(t, vm, `__text('pane')`).String()
 	if strings.Contains(pane, "de:ad:be:ef") {
 		t.Errorf("'in scope only' still shows an out-of-scope AP:\n%s", pane)
@@ -684,7 +684,7 @@ func TestClientsScopedOnlyToggleFilters(t *testing.T) {
 	    {mac:'3c:22:fb:aa:bb:cc', bssid:'a4:2b:8c:11:22:33', essid:'ACME-CORP', in_scope:true},
 	    {mac:'8e:41:03:9f:2d:70', in_scope:false, randomised_mac:true}
 	  ];
-	  S.tab = 'stations'; S.stationsScopedOnly = true; render();`)
+	  S.tab = 'stations'; S.inScopeOnly = true; render();`)
 	pane := jsRun(t, vm, `__text('pane')`).String()
 	if strings.Contains(pane, "8e:41:03:9f:2d:70") {
 		t.Errorf("'in scope only' still shows an out-of-scope client:\n%s", pane)
@@ -746,7 +746,7 @@ func TestFindingsControlsAndScopeFilter(t *testing.T) {
 	}
 
 	// Turn on in-scope only: the out-of-scope WEP finding disappears; the scoped ones remain.
-	jsRun(t, vm, `S.findingsScopedOnly = true; render();`)
+	jsRun(t, vm, `S.inScopeOnly = true; render();`)
 	pane = jsRun(t, vm, `__text('pane')`).String()
 	switch {
 	case strings.Contains(pane, "WEP encryption"):
@@ -1493,6 +1493,84 @@ func TestWPSKeysSurviveEmptyHashList(t *testing.T) {
 	}
 }
 
+// Test8021XCapturesSplitFromCrackable proves a PMKID/handshake overheard from a WPA-Enterprise
+// network is filed in its own "not crackable" table rather than beside PSK material the operator
+// would queue on the rig. The split keys off the observed AP's security class, so the same hash
+// row moves between tables as the AP population is learned.
+func Test8021XCapturesSplitFromCrackable(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+
+	// A handshake whose BSSID is not yet in the AP list reads as ordinary PSK material.
+	jsRun(t, vm, `
+	  S.data.hashes.hashes.push({
+	    kind: 'handshake', essid: 'ACME-8021X', bssid: 'c0:ff:ee:00:00:01',
+	    station: 'de:ad:de:ad:de:ad', channel: 36, in_scope: true,
+	    line: 'WPA*02*aabbccddeeff0011*c0ffee000001*deadde addead*41434d45*0102*00',
+	    at: '2026-09-04T10:40:00Z'});
+	  __render('hashes');`)
+	pane := jsRun(t, vm, `__text('pane')`).String()
+	if strings.Contains(pane, "not crackable") {
+		t.Errorf("a capture from an unknown-security AP was labelled 802.1X not-crackable:\n%s", pane)
+	}
+
+	// Learn that the BSSID is a WPA-Enterprise network: the row must move to the not-crackable
+	// table, and the explanatory note must warn against sending it to the rig.
+	jsRun(t, vm, `
+	  S.data.aps.push({bssid:'c0:ff:ee:00:00:01', essid:'ACME-8021X', channel:36, band:'5 GHz',
+	    in_scope:true, has_rssi:true, last_rssi:-55, active:true, last_seen_secs:4,
+	    security:{class:'wpa_enterprise', mfp:'required'}});
+	  __render('hashes');`)
+	pane = jsRun(t, vm, `__text('pane')`).String()
+	switch {
+	case !strings.Contains(pane, "802.1X captures - not crackable"):
+		t.Errorf("an enterprise capture did not get its own not-crackable table:\n%s", pane)
+	case !strings.Contains(pane, "do not send these to the cracking rig"):
+		t.Errorf("the 802.1X table is missing its not-crackable warning:\n%s", pane)
+	case !strings.Contains(pane, "ACME-8021X"):
+		t.Errorf("the enterprise network name is missing from the credentials tab:\n%s", pane)
+	}
+
+	// The crackable PSK table still carries the genuine PSK captures and no longer counts the
+	// enterprise row among them.
+	if !strings.Contains(pane, "PSK material") {
+		t.Errorf("the PSK material table vanished when an enterprise capture was present:\n%s", pane)
+	}
+}
+
+// TestHeaderScopeToggleNarrowsCredentials proves the engagement-wide header toggle (beside the
+// lock) drives the same S.inScopeOnly flag the per-tab checkboxes do, and narrows the credentials
+// tab's incidental captures out of view.
+func TestHeaderScopeToggleNarrowsCredentials(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+
+	// Off by default: the incidental (out-of-scope) NEIGHBOUR-NET capture is visible.
+	jsRun(t, vm, `__render('hashes')`)
+	pane := jsRun(t, vm, `__text('pane')`).String()
+	if !strings.Contains(pane, "NEIGHBOUR-NET") {
+		t.Errorf("an incidental capture is hidden before the scope filter is on:\n%s", pane)
+	}
+
+	// Click the header toggle: it exists, flips the shared flag, and the incidental row goes away
+	// while the scoped ACME-CORP material stays.
+	jsRun(t, vm, `
+	  (function () {
+	    const btn = document.querySelector('#scopeBtn');
+	    if (!btn) throw new Error('no in-scope toggle in the top bar');
+	    btn.fire('click');
+	  })();`)
+	if on := jsRun(t, vm, `S.inScopeOnly`).ToBoolean(); !on {
+		t.Fatalf("the header toggle did not set S.inScopeOnly")
+	}
+	jsRun(t, vm, `__render('hashes')`)
+	pane = jsRun(t, vm, `__text('pane')`).String()
+	switch {
+	case strings.Contains(pane, "NEIGHBOUR-NET"):
+		t.Errorf("'in scope only' still shows an incidental capture:\n%s", pane)
+	case !strings.Contains(pane, "ACME-CORP"):
+		t.Errorf("'in scope only' hid the scoped PSK material:\n%s", pane)
+	}
+}
+
 // TestMarkRogueDeviceTogglesAndColours: the AP detail pane offers "Mark Rogue Device", flips to
 // "Unmark" once marked, flags the name as a potential rogue, and the table row carries the tag.
 func TestMarkRogueDeviceTogglesAndColours(t *testing.T) {
@@ -1660,5 +1738,197 @@ func TestEvilTwinShowsCertificateRejections(t *testing.T) {
 	}
 	if !strings.Contains(pane, "correctly configured") {
 		t.Errorf("the rejection note should frame it as a correctly-configured client:\n%s", pane)
+	}
+}
+
+// TestEvilTwinPresentsCertificateDetail: the running view shows the full presented certificate
+// (fingerprint, SANs, validity, key) so the operator can see exactly what was cloned - the "better
+// cert-clone feedback" the field testers asked for.
+func TestEvilTwinPresentsCertificateDetail(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+	jsRun(t, vm, `S.tab = 'eviltwin'; render();`)
+	pane := jsRun(t, vm, `__text('pane')`).String()
+	switch {
+	case !strings.Contains(pane, "Presented certificate"):
+		t.Errorf("the running view does not show the presented certificate detail:\n%s", pane)
+	case !strings.Contains(pane, "SHA-256"):
+		t.Errorf("the presented certificate detail omits its fingerprint:\n%s", pane)
+	case !strings.Contains(pane, "CN=ACME Issuing CA"):
+		t.Errorf("the presented certificate detail omits the issuer:\n%s", pane)
+	case !strings.Contains(pane, "RSA 2048-bit"):
+		t.Errorf("the presented certificate detail omits the key:\n%s", pane)
+	}
+}
+
+// TestEvilTwinCertLibraryDetailExpands: a certificate row in the library has a details toggle that
+// reveals the full certificate, and the open state persists across a re-render (the 2 s poll).
+func TestEvilTwinCertLibraryDetailExpands(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+	jsRun(t, vm, `S.data.eap = {running: false}; S.certOpen['a1b2c3d4e5f60718'] = true; __render('eviltwin');`)
+	pane := jsRun(t, vm, `__text('pane')`).String()
+	switch {
+	case !strings.Contains(pane, "SAN"):
+		t.Errorf("an expanded certificate detail is missing the SAN row:\n%s", pane)
+	case !strings.Contains(pane, "mimicked from a harvested certificate"):
+		t.Errorf("an expanded certificate detail is missing its source detail:\n%s", pane)
+	}
+	// A different, collapsed cert must not leak its detail (its source_detail was "self-signed").
+	if strings.Count(pane, "to 2027-09-01") > 1 {
+		t.Errorf("a collapsed certificate still rendered its validity detail:\n%s", pane)
+	}
+}
+
+// TestEvilTwinLiveFeedLabelsEvents: the resizable live box filters the shared stream to rogue-AP
+// events and tags each by what it is - association, credential, certificate - EAPHammer-style.
+func TestEvilTwinLiveFeedLabelsEvents(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+	jsRun(t, vm, `
+	  S.log = [
+	    {kind:'recon', level:'info', at:'10:00:00', text:'[+] AP sweep noise that must not appear'},
+	    {kind:'eap', level:'good', at:'10:01:00', text:'[*] client associated', fields:{event:'client-join'}},
+	    {kind:'eap', level:'good', at:'10:02:00', text:'[+] MSCHAPv2 acme\\jsmith'},
+	    {kind:'harvest', level:'good', at:'10:03:00', text:'[+] certificate harvested'}
+	  ];
+	  S.tab = 'eviltwin'; render();`)
+	pane := jsRun(t, vm, `__text('pane')`).String()
+	switch {
+	case !strings.Contains(pane, "Live output"):
+		t.Errorf("the running view has no live output box:\n%s", pane)
+	case !strings.Contains(pane, "ASSOC"):
+		t.Errorf("an association is not labelled in the live feed:\n%s", pane)
+	case !strings.Contains(pane, "CRED"):
+		t.Errorf("a credential capture is not labelled in the live feed:\n%s", pane)
+	case !strings.Contains(pane, "CERT"):
+		t.Errorf("a certificate event is not labelled in the live feed:\n%s", pane)
+	case strings.Contains(pane, "sweep noise that must not appear"):
+		t.Errorf("the live feed leaked a non-rogue event:\n%s", pane)
+	}
+
+	// The box carries the inline resize style and records a dragged size for the next render.
+	resizable := jsRun(t, vm, `(document.querySelector('#eapfeed').style.cssText || '').indexOf('resize') >= 0`).ToBoolean()
+	if !resizable {
+		t.Errorf("the live output box is not resizable")
+	}
+}
+
+// TestEvilTwinTargetPickerCollapsesManyAPs: a crowded enterprise site (many BSSIDs under a few
+// names) renders as one dropdown and one focused panel, not a wall of cards, and the dropdown
+// selection drives which target is shown.
+func TestEvilTwinTargetPickerCollapsesManyAPs(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+	jsRun(t, vm, `
+	  S.data.eap = {running: false};
+	  S.data.aps = [];
+	  for (let i = 0; i < 40; i++) {
+	    S.data.aps.push({bssid: '10:00:00:00:00:' + (i<16?'0':'') + i.toString(16),
+	      essid: i % 2 ? 'CORP-EAP' : 'LAB-EAP', channel: 36, band: '5 GHz', in_scope: true,
+	      has_rssi: true, last_rssi: -40 - i, active: true, last_seen_secs: 2,
+	      security: {class: 'wpa_enterprise', mfp: 'required'}});
+	  }
+	  S.eapTarget = 'CORP-EAP';
+	  __render('eviltwin');`)
+	pane := jsRun(t, vm, `__text('pane')`).String()
+	if !strings.Contains(pane, "Target") {
+		t.Errorf("the target picker heading is missing:\n%s", pane)
+	}
+	// One network <select> with both names, not forty cards.
+	opts := jsRun(t, vm, `
+	  document.querySelector('#pane').findAll((n) =>
+	    n.tagName === 'SELECT' && (n.className || '').indexOf('target-select') >= 0)
+	    .reduce((acc, s) => acc + s.findAll((o) => o.tagName === 'OPTION').length, 0)`).String()
+	if opts != "2" {
+		t.Errorf("target dropdown should list 2 networks, got %q:\n%s", opts, pane)
+	}
+	// The focused panel shows the selected target and its BSSID count (20 of the 40 are CORP-EAP).
+	if !strings.Contains(pane, "20 BSSIDs broadcasting this name") {
+		t.Errorf("the focused target panel does not summarise its BSSIDs:\n%s", pane)
+	}
+	// Switching the selection re-focuses the other network.
+	jsRun(t, vm, `S.eapTarget = 'LAB-EAP'; __render('eviltwin');`)
+	pane = jsRun(t, vm, `__text('pane')`).String()
+	if !strings.Contains(pane, "Impersonate") && !strings.Contains(pane, "Start evil twin") {
+		t.Errorf("the picker lost its start action after switching target:\n%s", pane)
+	}
+
+	// The operator can pick which observed BSSID to clone/wear from a dropdown (one option per
+	// discovered BSSID), rather than always the strongest.
+	nopt := jsRun(t, vm, `
+	  document.querySelector('#pane').findAll((n) =>
+	    n.tagName === 'SELECT' && (n.className || '').indexOf('bssid-select') >= 0)
+	    .reduce((acc, s) => acc + s.findAll((o) => o.tagName === 'OPTION').length, 0)`).String()
+	if nopt != "20" {
+		t.Errorf("the BSSID dropdown should list all 20 observed BSSIDs, got %q", nopt)
+	}
+}
+
+// TestEvilTwinTimerAndAssociationCards: the running view adds a "running for" timer card and an
+// "associations" card to the RADIUS counters, per the field testers' request.
+func TestEvilTwinTimerAndAssociationCards(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+	jsRun(t, vm, `
+	  S.data.eap.session.started = new Date(Date.now() - 95000).toISOString();
+	  S.data.eap.clients = [{mac: 'aa:bb:cc:dd:ee:ff', since: '2026-09-04T10:00:00Z'}];
+	  S.tab = 'eviltwin'; render();`)
+	pane := jsRun(t, vm, `__text('pane')`).String()
+	switch {
+	case !strings.Contains(pane, "running for"):
+		t.Errorf("the running view has no running-time card:\n%s", pane)
+	case !strings.Contains(pane, "1:35"):
+		t.Errorf("the running-time card does not show elapsed time (~1:35):\n%s", pane)
+	case !strings.Contains(pane, "associations"):
+		t.Errorf("the running view has no associations card:\n%s", pane)
+	}
+}
+
+// TestEvilTwinRedBarTimer: the global running banner (#eap) shows a live timer just left of Stop.
+func TestEvilTwinRedBarTimer(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+	jsRun(t, vm, `
+	  S.data.eap.session.started = new Date(Date.now() - 3000).toISOString();
+	  render();`)
+	bar := jsRun(t, vm, `__text('eap')`).String()
+	if !strings.Contains(bar, "⏱") {
+		t.Errorf("the running red bar has no timer:\n%s", bar)
+	}
+	// The timer must come before the Stop button in the bar.
+	if strings.Index(bar, "⏱") > strings.Index(bar, "Stop evil twin") {
+		t.Errorf("the timer is not to the left of the Stop button:\n%s", bar)
+	}
+}
+
+// TestEvilTwinFeedNodeReusedAcrossRenders proves the live console element is cached and re-used, not
+// rebuilt each poll - the fix for the resize aborting and the scrollbar blinking on refresh. A
+// marker set on the node survives a re-render only if the same node is kept.
+func TestEvilTwinFeedNodeReusedAcrossRenders(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+	jsRun(t, vm, `S.tab = 'eviltwin'; render(); document.querySelector('#eapfeed').__mark = 42; render();`)
+	mark := jsRun(t, vm, `document.querySelector('#eapfeed').__mark`).String()
+	if mark != "42" {
+		t.Errorf("the live output node was rebuilt across a render (marker lost): got %q", mark)
+	}
+	// A pointer press inside the box holds off the background rebuild so a resize drag is not cut off.
+	jsRun(t, vm, `document.querySelector('#eapfeed').fire('pointerdown');`)
+	if !jsRun(t, vm, `S._eapInteracting`).ToBoolean() {
+		t.Errorf("a press inside the live output box did not set the interacting guard")
+	}
+}
+
+// TestRadiosInjectionStateExplained: the radios tab explains each injection state, so an
+// "inconclusive" card does not read as a fault (the recurring two-mt76-cards confusion).
+func TestRadiosInjectionStateExplained(t *testing.T) {
+	vm := newJSRuntime(t, jsFixture)
+	jsRun(t, vm, `
+	  S.data.radios = [
+	    {id:'phy0', ifname:'wlan0', driver:'mt76x2u', mac:'00:c0:ca:11:22:33',
+	     bands:['2.4 GHz'], injection:'verified', usable_channels:13,
+	     supported_iftypes:['station','monitor'], roles:[{role:'recon', capable:true}]},
+	    {id:'phy1', ifname:'wlan1', driver:'mt76x2u', mac:'00:c0:ca:44:55:66',
+	     bands:['2.4 GHz'], injection:'inconclusive', usable_channels:13,
+	     supported_iftypes:['station','monitor'], roles:[{role:'survey', capable:true}]}
+	  ];
+	  __render('radios');`)
+	pane := jsRun(t, vm, `__text('pane')`).String()
+	if !strings.Contains(pane, "not a failure") {
+		t.Errorf("the radios tab does not explain that inconclusive injection is not a failure:\n%s", pane)
 	}
 }

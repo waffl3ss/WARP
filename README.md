@@ -1,6 +1,6 @@
 # WARP - Wireless Assessment & Rogue Platform
 
-**v0.24.0** · Linux (Debian/Ubuntu/Kali), amd64 + arm64 · [@waffl3ss](https://github.com/waffl3ss)
+**v0.29.0** · Linux (Debian/Ubuntu/Kali), amd64 + arm64 · [@waffl3ss](https://github.com/waffl3ss)
 
 > Built with [Claude Code](https://claude.com/claude-code). I started WARP myself, but the research
 > and wiring-up of the nl80211 / EAP / WPS internals was taking a very long time, so I built it out
@@ -95,7 +95,7 @@ Neither holds engagement state. Close either one, lose the SSH session, kill the
 
 ## The terminal dashboard
 
-`warp` with no arguments opens it. Seven tabs, live, no commands to memorise. The build and handle sit at the right of the title line, faint - findable if you look for them, out of the way while you are working.
+`warp` with no arguments opens it. Nine tabs, live, no commands to memorise. The build and handle sit at the right of the title line, faint - findable if you look for them, out of the way while you are working.
 
 `PMF` is Protected Management Frames (802.11w) - `off` means any associated client can be
 deauthenticated, `req` means none can. `◉` marks a hidden network whose name WARP recovered
@@ -116,9 +116,10 @@ Point at a row and press a key - you never type a MAC address:
 | `h` | hunt it, or stop hunting it - works out of scope, it only listens |
 | `H` | stop every hunt |
 | `a` | add this network's name to scope (recorded in the audit log) |
-| `u` | decloak a hidden network - needs `scope confirm` on that BSSID first |
+| `u` | decloak a hidden network - a cloaked network has no name to match, so scope resumes the instant the name is recovered |
 | `P` | WPS Pixie Dust: one exchange, PIN recovered offline |
 | `C` | clone an enterprise network's RADIUS certificate, for the rogue to mimic |
+| `S` | on the APs tab: start the evil twin wearing this specific enterprise BSSID (pick which observed AP to mirror) |
 | `x` | exclude it from active work (operator veto) |
 | `m` | mark/unmark this BSSID as a potential rogue (this BSSID only; turns the name red) |
 | `r` | start/stop recon |
@@ -222,6 +223,11 @@ RADIUS server as MSCHAPv2 (hashcat `-m 5500`) into `creds/`. WARP never mixes th
 handshake parser accepts only EAPOL-Key frames (802.1X packet type 3) and rejects EAP-Packet
 (type 0) outright.
 
+A PMKID or four-way handshake overheard from a WPA-Enterprise network is a valid EAPOL-Key capture,
+but its key comes from the RADIUS exchange rather than a passphrase, so no wordlist recovers it.
+WARP keeps it as evidence, files it apart labelled **not crackable** (`802.1X` in both frontends),
+leaves it out of the deliverable hash counts, and never announces it as a win.
+
 ## How many adapters do I need?
 
 **One is enough.** WARP runs fully on a single adapter - active work borrows the capture
@@ -283,8 +289,9 @@ Findings follow the same rule. Posture - open, WEP, TKIP, WPS, 802.11w, transiti
 off every observed network, in scope or not, because observing it is not transmitting. Each finding
 is filed by scope, not thrown away: `findings.csv` holds all of them, `findings-in-scope.csv` holds
 only those on a scoped network (the file for reporting), the report keeps its deliverable totals to
-in-scope findings with an *Out of scope (context)* section for the rest, and the findings tab has an
-**in scope only** toggle. A configuration that is correct or a test the network passed - 802.11w
+in-scope findings with an *Out of scope (context)* section for the rest, and an engagement-wide
+**in scope only** control narrows every view at once - a per-tab checkbox on the APs, Clients,
+Findings and Credentials tabs, plus one switch in the dashboard header that flips them all together. A configuration that is correct or a test the network passed - 802.11w
 required, WPS locked, an AP that resisted Pixie Dust - is filed as a `control`, shown apart from the
 exposures so a pass never reads as a problem.
 
@@ -347,7 +354,7 @@ Everything is also available in both interfaces; nothing is subcommand-only or d
 | `warp clients` | Observed client devices, with the network each is on |
 | `warp hashes [--lines]` | Captured PMKIDs and handshakes; `--lines` pipes to the cracking rig |
 | `warp psk <bssid>` | Solicit a PMKID (default), or `--deauth --station <mac>` to force a handshake; `--count`/`--seconds` size the deauth campaign |
-| `warp decloak <bssid>` | Recover a hidden network's name (needs `scope confirm` on that BSSID) |
+| `warp decloak <bssid>` | Recover a hidden network's name by deauth; a cloaked network has no name to match, so scope resumes once it is recovered (refused on an 802.11w network) |
 | `warp wps <bssid>` | One WPS exchange, PIN recovered offline (Pixie Dust). No online brute force |
 | `warp hunt <bssid\|mac>` | Direction-find a device - works out of scope, it only listens |
 | `warp eap harvest <bssid>` | Read the RADIUS server's certificate off the air, for the rogue to mimic |
@@ -355,7 +362,7 @@ Everything is also available in both interfaces; nothing is subcommand-only or d
 | `warp eap cert generate <essid>` | Build a certificate from fields you supply (the certwizard equivalent) |
 | `warp eap cert import <essid>` | Import a certificate and key made elsewhere |
 | `warp eap cert select <essid> <id>` | Choose which certificate goes on the air |
-| `warp eap start <essid>` | Impersonate a scoped enterprise network and capture credentials |
+| `warp eap start <essid>` | Impersonate a scoped enterprise network and capture credentials; `--bssid` wears a specific observed BSSID (default: strongest), `--channel`/`--accept`/`--no-gtc` tune it |
 | `warp eap status` / `stop` | What has been captured; tear it down |
 | `warp rogue classify` / `list` | Re-run classification, list findings |
 | `warp rogue karma-test` | Probe for a network that cannot exist; record what answers |

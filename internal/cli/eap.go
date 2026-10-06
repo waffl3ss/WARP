@@ -43,6 +43,7 @@ A supplicant that validates properly will refuse, and that refusal is the correc
 		noGTC        bool
 		accept       bool
 		keepOwnBSSID bool
+		bssid        string
 	)
 
 	start := &cobra.Command{
@@ -55,6 +56,7 @@ A supplicant that validates properly will refuse, and that refusal is the correc
 				Channel:      channel,
 				Accept:       accept,
 				KeepOwnBSSID: keepOwnBSSID,
+				BSSID:        bssid,
 			}
 			// GTC downgrade is automatic; --no-gtc opts out. Leaving the field nil means auto-on.
 			if noGTC {
@@ -87,6 +89,10 @@ A supplicant that validates properly will refuse, and that refusal is the correc
 		"beacon from the adapter's own MAC instead of cloning the target's BSSID - use with a "+
 			"different channel and a deauth of the real AP, so a client lands on the rogue rather "+
 			"than the (often stronger) real access point sharing its BSSID")
+	start.Flags().StringVar(&bssid, "bssid", "",
+		"when several access points broadcast the ESSID, wear this specific observed BSSID instead "+
+			"of the strongest. Must be one WARP has seen broadcasting the scoped name - an address "+
+			"it has not observed for that ESSID is refused (discovered, never configured)")
 
 	stop := &cobra.Command{
 		Use:   "stop",

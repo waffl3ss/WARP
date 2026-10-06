@@ -1553,6 +1553,28 @@ func (e *Engine) emitHash(res handshake.Result) {
 		scopeNote = "  [OUT OF SCOPE - incidental capture, not part of the deliverable]"
 	}
 
+	// A PMKID or four-way handshake from a WPA-Enterprise (802.1X) network is real evidence and
+	// is kept, but its pairwise key is derived from the RADIUS exchange, not a passphrase - no
+	// hashcat 22000 wordlist can recover anything from it. So it is never announced as a win:
+	// drop it to an informational line (no tray toast) and say plainly it is not crackable, so
+	// nobody transfers it to the cracking rig expecting a result. The enterprise credential
+	// worth having is the MSCHAPv2 exchange from the evil-twin RADIUS server (mode 5500).
+	enterprise := false
+	if e.tracker != nil {
+		if rec, ok := e.tracker.AP(recon.MAC(res.AP)); ok {
+			switch rec.Security.Class {
+			case recon.SecWPAEnterprise, recon.SecWPA3Ent192:
+				enterprise = true
+			}
+		}
+	}
+	if enterprise {
+		if level == rpc.LevelGood {
+			level = rpc.LevelInfo
+		}
+		scopeNote += "  [802.1X - not crackable, kept as evidence]"
+	}
+
 	e.notifyHandshake(res)
 
 	e.broadcast(rpc.Event{
@@ -1563,7 +1585,7 @@ func (e *Engine) emitHash(res handshake.Result) {
 		Fields: map[string]any{
 			"essid": res.ESSID, "bssid": res.APString(), "sta": res.STAString(),
 			"channel": res.Channel, "radio_id": res.RadioID, "detail": res.Detail,
-			"in_scope": res.InScope, "file": file,
+			"in_scope": res.InScope, "file": file, "enterprise": enterprise,
 		},
 	})
 }

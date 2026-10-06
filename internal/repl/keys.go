@@ -187,9 +187,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "S":
-		// Start the rogue against the network under the cursor.
+		// Start the rogue. On the Evil Twin tab, against the selected network (wears the strongest
+		// observed BSSID). On the Access Points tab, against the enterprise AP under the cursor -
+		// wearing that specific BSSID, so the operator chooses which observed access point to mirror.
 		if m.view == ViewEvilTwin {
 			return m, m.startEvilTwin()
+		}
+		if m.view == ViewAPs {
+			return m, m.startEvilTwinAP()
 		}
 
 	case "l":
@@ -585,6 +590,48 @@ func (m *Model) startEvilTwin() tea.Cmd {
 	return m.runAction("eap.start", daemon.EAPStartParams{ESSID: essid}, note)
 }
 
+// startEvilTwinAP brings up the rogue against the specific enterprise access point under the cursor
+// on the Access Points tab, so the operator chooses which observed BSSID the twin wears rather than
+// always the strongest. The address is one WARP discovered broadcasting the scoped name; the daemon
+// validates it again and refuses anything it has not seen (invariant 1).
+func (m *Model) startEvilTwinAP() tea.Cmd {
+	if m.data.eap.Running {
+		return func() tea.Msg {
+			return flashMsg{text: styleWarn.Render(
+				"already impersonating " + m.data.eap.Session.ESSID + " - press " +
+					styleKey.Render("X") + " on the Evil Twin tab to stop it first")}
+		}
+	}
+
+	ap, ok := m.selectedAP()
+	if !ok {
+		return nil
+	}
+	switch {
+	case ap.Security.Class != recon.SecWPAEnterprise && ap.Security.Class != recon.SecWPA3Ent192:
+		return func() tea.Msg {
+			return flashMsg{text: styleDim.Render(orHidden(ap.ESSID) + " is " +
+				string(ap.Security.Class) + ", not enterprise - the evil twin impersonates a " +
+				"RADIUS network, so there is nothing to capture here")}
+		}
+	case !ap.InScope:
+		return func() tea.Msg {
+			return flashMsg{text: styleWarn.Render(orHidden(ap.ESSID) +
+				" is out of scope - press " + styleKey.Render("a") + " to add it to scope first")}
+		}
+	}
+
+	note := "impersonating " + ap.ESSID + " as " + ap.BSSID.String()
+	for _, e := range m.data.certs.Networks[ap.ESSID] {
+		if e.Selected {
+			note += " with " + e.SourceDetail
+			break
+		}
+	}
+	return m.runAction("eap.start",
+		daemon.EAPStartParams{ESSID: ap.ESSID, Channel: ap.Channel, BSSID: ap.BSSID.String()}, note)
+}
+
 // pixieSelected runs Pixie Dust against the access point under the cursor.
 func (m *Model) pixieSelected() tea.Cmd {
 	ap, ok := m.selectedAP()
@@ -873,6 +920,17 @@ func (m *Model) populate() {
 		}))
 	}
 
+	// A PMKID or handshake overheard from a WPA-Enterprise (802.1X) network is kept as evidence,
+	// but its pairwise key comes from the RADIUS exchange, not a passphrase - no 22000 wordlist can
+	// recover it. Mark those rows so they never read as crackable PSK material headed for the rig
+	// (the same honesty the web credentials tab enforces). Keyed off the observed AP's security.
+	entBSSID := map[string]bool{}
+	for _, ap := range m.data.aps {
+		if ap.Security.Class == recon.SecWPAEnterprise || ap.Security.Class == recon.SecWPA3Ent192 {
+			entBSSID[strings.ToLower(ap.BSSID.String())] = true
+		}
+	}
+
 	for _, h := range m.data.hashes.Hashes {
 		kind := sGood.Render("PMKID")
 		if h.Kind == "handshake" {
@@ -885,6 +943,12 @@ func (m *Model) populate() {
 			scope = sErr.Render("no")
 			kind = sFaint.Render(stripANSI(kind))
 		}
+		secret := sFaint.Render(h.Line)
+		if entBSSID[strings.ToLower(h.BSSID)] {
+			// 802.1X capture: kept, but not crackable. Say so plainly, in place of the hash line.
+			kind = sFaint.Render("802.1X")
+			secret = sWarn.Render("not crackable - 802.1X key is from RADIUS, not a passphrase")
+		}
 		hashRows = append(hashRows, rowFor(m.hashCols, map[string]string{
 			"KIND":    kind,
 			"SCOPE":   scope,
@@ -893,7 +957,7 @@ func (m *Model) populate() {
 			"CLIENT":  h.Station,
 			"CH":      fmt.Sprintf("%d", h.Channel),
 			"AT":      h.At.Format("15:04:05"),
-			"SECRET":  sFaint.Render(h.Line),
+			"SECRET":  secret,
 		}))
 	}
 	setRows(&m.hashTable, hashRows)

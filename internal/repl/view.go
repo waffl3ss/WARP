@@ -683,6 +683,11 @@ func (m *Model) radiosBody() string {
 		b.WriteString(kv("bands", strings.Join(r.Bands, ", "), w))
 		b.WriteString(kv("channels", fmt.Sprintf("%d usable", r.Channels), w))
 		b.WriteString(kvStyled("injection", r.Injection, w, injectionStyle(r.Injection)))
+		if note := injectionNote(r.Injection); note != "" {
+			for _, line := range wrapWords(note, w-4) {
+				b.WriteString("    " + sFaint.Render(line) + "\n")
+			}
+		}
 		b.WriteString(kv("modes", strings.Join(r.Iftypes, ", "), w))
 		if r.APAndMonitor {
 			b.WriteString(kv("concurrent", "AP and monitor at the same time", w))
@@ -751,6 +756,22 @@ func injectionStyle(state string) lipgloss.Style {
 	}
 }
 
+// injectionNote is the one-line explanation shown under a radio's injection state, so
+// "inconclusive" does not read as a fault - the recurring confusion when two identical mt76x2u
+// cards come up differently. Empty for a plain verified card, which needs no gloss.
+func injectionNote(state string) string {
+	switch {
+	case strings.Contains(state, "verified"):
+		return ""
+	case strings.Contains(state, "failed"):
+		return "driver rejected the frame - this adapter cannot transmit, so active work is not offered on it"
+	case strings.Contains(state, "inconclusive"):
+		return "driver took the frames but none looped back - common on mt76, not a failure; transmitting proceeds"
+	default:
+		return "not probed yet - measured the first time a transmitting attack needs it"
+	}
+}
+
 // section writes a heading and its body, indented consistently.
 //
 // The Evil Twin tab mixed kv() lines, which start at column 0, with hand-indented prose and
@@ -790,9 +811,10 @@ func (m *Model) evilTwinBody() string {
 		section(&b, "Not running", idle.String())
 
 		var how strings.Builder
-		how.WriteString(sKey.Render("S") + sDim.Render("  start it against the network under the cursor") + "\n")
+		how.WriteString(sKey.Render("S") + sDim.Render("  start it against the network under the cursor (wears the strongest BSSID)") + "\n")
 		how.WriteString(sKey.Render("g") + sDim.Render("  build a certificate from fields you type") + "\n")
 		how.WriteString(sKey.Render("C") + sDim.Render("  on the Access Points tab: clone the real certificate") + "\n")
+		how.WriteString(sKey.Render("S") + sDim.Render("  on the Access Points tab: start it wearing a specific observed BSSID") + "\n")
 		section(&b, "", how.String())
 
 		b.WriteString(m.certLibrary(w))
@@ -1141,6 +1163,7 @@ func (m *Model) helpBody() string {
 			{"u", "decloak - recover a hidden network's name"},
 			{"P", "WPS Pixie Dust - one exchange, PIN recovered offline"},
 			{"C", "clone the RADIUS certificate of an enterprise network"},
+			{"S", "start the evil twin wearing this enterprise BSSID"},
 			{"a", "add this network's name to scope"},
 			{"x", "exclude this BSSID from active work"},
 			{"m", "mark / unmark this BSSID as a potential rogue"},

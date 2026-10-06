@@ -108,9 +108,18 @@ type EAPStartParams struct {
 	// monitoring and some infrastructure, and a client site with 802.11r or a WIDS will see it
 	// immediately. That is sometimes what you want and sometimes not.
 	//
-	// There is no field here to *supply* a BSSID. The address is taken from the access point
-	// WARP observed broadcasting the scoped ESSID - discovered, never configured.
+	// The address is one WARP observed broadcasting the scoped ESSID - discovered, never
+	// configured. When several access points share the name, the operator may say which observed
+	// one to wear by naming it here; empty means the strongest. See BSSID.
 	KeepOwnBSSID bool `json:"keep_own_bssid,omitempty"`
+
+	// BSSID optionally selects which observed access point the rogue mirrors, when more than one
+	// broadcasts the scoped ESSID. It is validated against what WARP has actually seen on the air:
+	// an address not observed broadcasting this ESSID is refused. This is selection among
+	// discovered addresses, not configuration - invariant 1 forbids a *client-supplied* BSSID as
+	// scope or as an arbitrary target, and this is neither: the ESSID still authorizes, and the
+	// address must be one WARP discovered for it. Empty falls back to the strongest observed.
+	BSSID string `json:"bssid,omitempty"`
 	// Accept returns Access-Accept after capture instead of Access-Reject.
 	//
 	// Off by default: rejecting means the supplicant sees a failed login and is not placed on
@@ -184,11 +193,25 @@ func (d *Daemon) handleEAPStart(ctx context.Context, params json.RawMessage) (an
 		return nil, rpc.Errorf(rpc.CodeScopeDenied, "%v", err)
 	}
 
-	// The BSSID to wear. Discovered, never supplied: it is the address of the access point
-	// WARP observed broadcasting this scoped name.
+	// The BSSID to wear. Discovered, never supplied: it is the address of an access point WARP
+	// observed broadcasting this scoped name. The operator may pick which observed one (when the
+	// name is on several), but an address WARP has not seen for this ESSID is refused - that keeps
+	// it a choice among discovered addresses, not a hand-typed target (invariant 1).
 	cloneBSSID := ""
 	if !p.KeepOwnBSSID {
-		cloneBSSID = d.strongestBSSIDFor(p.ESSID)
+		if p.BSSID != "" {
+			canon := d.observedBSSIDFor(p.ESSID, p.BSSID)
+			if canon == "" {
+				return nil, rpc.Errorf(rpc.CodeInvalidParams,
+					"%s was not observed broadcasting %q. The rogue wears only a BSSID WARP has "+
+						"discovered for the scoped network, never one supplied by hand - pick one "+
+						"from the observed access points, or omit it for the strongest",
+					p.BSSID, p.ESSID)
+			}
+			cloneBSSID = canon
+		} else {
+			cloneBSSID = d.strongestBSSIDFor(p.ESSID)
+		}
 	}
 
 	handle, err := d.sched.Acquire(ctx, radio.RoleRogue)
@@ -383,6 +406,26 @@ func (d *Daemon) eapCertificate(essid string) (*eapChain, error) {
 		return nil, fmt.Errorf("daemon: generated a certificate for %q but could not load it", essid)
 	}
 	return &eapChain{entry: entry, tls: tlsConfigFor(pair)}, nil
+}
+
+// observedBSSIDFor returns the canonical address of the access point WARP has observed broadcasting
+// essid whose BSSID matches the supplied one (case-insensitively), or "" when none does.
+//
+// It is how the rogue's chosen BSSID is validated: the operator may pick which observed access point
+// to mirror, but only one WARP has actually seen on the air for this scoped name - an address typed
+// by hand, or one belonging to a different network, is refused. That keeps BSSID selection a choice
+// among discovered addresses rather than configuration (invariant 1).
+func (d *Daemon) observedBSSIDFor(essid, bssid string) string {
+	want := strings.ToLower(strings.TrimSpace(bssid))
+	if want == "" {
+		return ""
+	}
+	for _, ap := range d.engine.Tracker().APsForESSID(essid) {
+		if strings.ToLower(ap.BSSID.String()) == want {
+			return ap.BSSID.String()
+		}
+	}
+	return ""
 }
 
 // strongestBSSIDFor returns the address of the observed access point broadcasting essid with

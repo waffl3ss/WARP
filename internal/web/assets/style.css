@@ -134,7 +134,13 @@ header { align-items: center; }
 .noscript b { display: block; margin-bottom: 6px; }
 .noscript code { font-family: var(--mono); color: var(--cyan); }
 
-#logout { margin-left: auto; }
+/* The in-scope switch and the lock form the right-hand group of the top bar: the switch absorbs
+   the free space so it and the lock sit together at the far right, switch immediately left of lock. */
+#scopeBtn { margin-left: auto; }
+#logout { margin-left: 16px; }
+/* The in-scope switch in the header carries the toggle component but needs no extra left gap of its
+   own - the margin-left:auto above positions it. */
+.header-scope { vertical-align: middle; }
 
 /* Attribution. Present, not loud - it sits beside live engagement data. */
 .credit {
@@ -220,7 +226,8 @@ header { align-items: center; }
   color: var(--red);
 }
 .eap .why { color: var(--text-dim); font-size: 12px; }
-.eap button { margin-left: auto; }
+/* The timer + Stop button group, pinned to the right of the running banner, timer first. */
+.eap-right { margin-left: auto; display: inline-flex; align-items: center; gap: 12px; }
 
 .banner {
   grid-column: 1 / -1; width: 100%; padding: 8px 16px; font-size: 13px;
@@ -386,6 +393,10 @@ tbody td.wrap { white-space: normal; font-family: var(--sans); }
 
 .empty { padding: 48px 16px; text-align: center; color: var(--text-dim); }
 .empty b { display: block; color: var(--text); font-size: 15px; margin-bottom: 6px; }
+/* A tighter, left-aligned variant for an intro that sits above real content (the Evil Twin tab),
+   where the full centered empty-state took up most of the first screen. */
+.empty.compact { padding: 14px 16px; text-align: left; }
+.empty.compact p { margin: 4px 0 0; font-size: 13px; line-height: 1.5; }
 
 /* ---------- detail sidebar ---------- */
 
@@ -637,6 +648,63 @@ h1.section { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; 
 #log { font-family: var(--mono); font-size: 12.5px; line-height: 1.65; }
 #log div { padding: 1px 0; }
 #log .ts { color: var(--text-faint); margin-right: 8px; }
+
+/* ---------- evil twin live feed (eaphammer-style console) ---------- */
+
+/* A resizable console box. The drag handle is the browser's own (resize: both, set inline so the
+   remembered size can be reapplied through the CSSOM). Dark, monospaced, scrollable - built to be
+   dragged to a clean size and screenshotted. */
+.console {
+  background: var(--bg-sunken, #0c0e13); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 10px 12px; margin-bottom: 18px;
+  min-height: 140px; min-width: 280px; max-width: 100%;
+  height: 260px; /* default, overridden inline once the operator resizes it */
+}
+.console-body {
+  display: flex; flex-direction: column-reverse; /* newest pinned to the bottom */
+  height: 100%; overflow: auto;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+}
+.console-body .cl { padding: 1px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.console-body .cl .ts { color: var(--text-faint); margin-right: 8px; }
+.cl-tag {
+  display: inline-block; min-width: 54px; text-align: center; margin-right: 8px;
+  padding: 0 6px; border-radius: 4px; font-size: 10.5px; letter-spacing: .04em;
+  border: 1px solid var(--line); color: var(--text-dim);
+}
+.cl-tag.good { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.cl-tag.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+.cl-tag.bad  { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.cl-tag.info { color: var(--blue, #7aa2f7); border-color: color-mix(in srgb, var(--blue, #7aa2f7) 45%, transparent); }
+
+/* ---------- certificate detail ---------- */
+
+.certdetail { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 6px 0 4px; }
+.certdetail dt { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding-top: 2px; }
+.certdetail dd { margin: 0; font-size: 13px; }
+.certdetail-row td { background: var(--bg-raised); padding: 10px 14px; }
+
+/* ---------- evil twin target picker ---------- */
+
+.targetpick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.target-select {
+  background: var(--bg-raised); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 8px 10px; font-size: 14px; font-family: var(--mono);
+  min-width: 260px; max-width: 100%;
+}
+.target-card { max-width: 560px; }
+.target-card .bssid-pick { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.bssid-select {
+  background: var(--bg-raised); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: var(--mono);
+  max-width: 100%;
+}
+
+/* The one-line explanation under a radio's injection state (what verified / inconclusive mean). */
+.inj-note { font-size: 11.5px; line-height: 1.45; margin-top: 3px; }
+
+/* The live running-time pill in the evil-twin red bar, just left of Stop. */
+.eap-timer { font-variant-numeric: tabular-nums; font-family: var(--mono); }
 
 /* ---------- toast ---------- */
 

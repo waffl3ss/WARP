@@ -797,3 +797,46 @@ func TestTheEvilTwinTabShowsTheCertificateLibrary(t *testing.T) {
 		t.Errorf("the empty library does not say what would happen instead:\n%s", out)
 	}
 }
+
+// TestEnterpriseCapturesMarkedNotCrackable: a PMKID/handshake overheard from a WPA-Enterprise
+// network is kept but must never read as crackable PSK material - the same honesty the web
+// credentials tab enforces (the key is from RADIUS, not a passphrase).
+func TestEnterpriseCapturesMarkedNotCrackable(t *testing.T) {
+	m := fixture(t, 140, 40)
+	// A handshake overheard from the fixture's enterprise BSSID (CORP-8021X, a4:2b:8c:11:22:03).
+	m.data.hashes.Hashes = append(m.data.hashes.Hashes, store.HashRecord{
+		Kind: "handshake", ESSID: "CORP-8021X", BSSID: "a4:2b:8c:11:22:03",
+		Station: "de:ad:be:ef:10:09", Channel: 36, InScope: true,
+		Line: "WPA*02*dead...*a42b8c112203*deadbeef1009*434f52502d38303231*...", At: time.Now(),
+	})
+	m.populate()
+	m.view = ViewCredentials
+	m.layout()
+
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "802.1X") {
+		t.Errorf("an enterprise capture is not marked 802.1X in the credentials table:\n%s", out)
+	}
+	if !strings.Contains(out, "not crackable") {
+		t.Errorf("an enterprise capture does not say it is not crackable:\n%s", out)
+	}
+}
+
+// TestRadiosInjectionStateIsExplained: the radios tab explains "inconclusive" so a card that comes
+// up differently from an identical one is not mistaken for a fault (the two-mt76 confusion).
+func TestRadiosInjectionStateIsExplained(t *testing.T) {
+	m := fixture(t, 140, 40)
+	m.data.radios = []daemon.RadioInfo{
+		{ID: "phy0", Ifname: "wlan0", Driver: "mt76x2u", Bands: []string{"2.4 GHz"},
+			Injection: "verified", Channels: 13, Iftypes: []string{"station", "monitor"}, Enabled: true},
+		{ID: "phy1", Ifname: "wlan1", Driver: "mt76x2u", Bands: []string{"2.4 GHz"},
+			Injection: "inconclusive", Channels: 13, Iftypes: []string{"station", "monitor"}, Enabled: true},
+	}
+	m.view = ViewRadios
+	m.layout()
+
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "not a failure") {
+		t.Errorf("the radios tab does not explain that inconclusive injection is not a failure:\n%s", out)
+	}
+}

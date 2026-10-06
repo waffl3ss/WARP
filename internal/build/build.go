@@ -10,7 +10,7 @@ package build
 // from git: a plain `go build ./...` with no Makefile and no repository must still produce a
 // binary that knows what it is, because that is how it gets built on a machine that only has
 // the source.
-const Version = "v0.24.0"
+const Version = "v0.29.0"
 
 // Commit is the git revision the binary was built from, set at link time by the Makefile with
 // -X github.com/waffl3ss/warp/internal/build.Commit=<sha>. Empty for a build outside the
